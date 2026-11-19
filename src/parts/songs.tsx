@@ -1,9 +1,9 @@
 /* ============ 歌曲庫 ============ */
 type SongV = { w: string; r: string; m: string };
-type Song2 = { id: string; t: string; a: string; y: number; g: string; tie: string; lv: string; yt: string; v: SongV[]; note: string; i: number };
+type Song2 = { id: string; t: string; a: string; y: number; g: string; tie: string; lv: string; yt: string; v: SongV[]; note: string; i: number; lu: string };
 const SONGS2: Song2[] = SONGS2_RAW.split("\n").map((l: string, i: number): Song2 => {
-  const [id, t, a, y, g, tie, lv, yt, v, note] = l.split("|") as [string, string, string, string, string, string, string, string, string, string];
-  return { id, t, a, y: Number(y), g, tie, lv, yt, note, i, v: v.split(";").filter(Boolean).map((e: string): SongV => { const [w, r, m] = e.split(":") as [string, string, string]; return { w, r, m }; }) };
+  const [id, t, a, y, g, tie, lv, yt, v, note, lu] = l.split("|") as [string, string, string, string, string, string, string, string, string, string, string];
+  return { id, t, a, y: Number(y), g, tie, lv, yt, note, i, lu: lu ?? "", v: v.split(";").filter(Boolean).map((e: string): SongV => { const [w, r, m] = e.split(":") as [string, string, string]; return { w, r, m }; }) };
 });
 const GENRES = ["J-POP", "アニメ", "ロック", "シティポップ", "昭和・平成名曲", "ボカロ"];
 const ARTISTS = [...new Set(SONGS2.map((s: Song2) => s.a))].sort((a: string, b: string) => SONGS2.filter((x: Song2) => x.a === b).length - SONGS2.filter((x: Song2) => x.a === a).length || a.localeCompare(b, "ja"));
@@ -101,6 +101,25 @@ function isContent(tk: Tok): boolean {
   if (!/[\u3040-\u30ff\u3400-\u9fff]/.test(tk.surface_form)) return false;
   return KJ.test(tk.surface_form) || tk.surface_form.length >= 2;
 }
+function lyricsPageUrl(s: Song2): string {
+  return s.lu ? `https://www.uta-net.com/song/${s.lu}/` : lyricsSearchUrl(s, "g");
+}
+const LYR_JUNK = /(作詞|作曲|編曲|歌手|歌|唄)\s*[：:]|歌ネット|uta-net|J-Lyric|JASRAC|NexTone|copyright|©|ⓒ|https?:\/\/|www\.|マイ歌ネット|印刷する|ブックマーク|ツイート|発売日\s*[：:]|^\s*\d+\s*$/i;
+function cleanLyrics(raw: string, s: Song2): string {
+  const t0 = s.t.replace(/\s+/g, ""), a0 = s.a.replace(/\s+/g, "");
+  const out: string[] = [];
+  for (const l0 of raw.replace(/\r/g, "").replace(/\u3000/g, " ").split("\n")) {
+    const l = l0.replace(/\s+/g, " ").trim();
+    if (!l) { if (out.length && out[out.length - 1] !== "") out.push(""); continue; }
+    const c = l.replace(/\s+/g, "");
+    if (c === t0 || c === a0 || c === t0 + a0) continue;
+    if (LYR_JUNK.test(l) && l.length < 60) continue;
+    if (l.length > 120) continue;
+    out.push(l);
+  }
+  while (out.length && out[out.length - 1] === "") out.pop();
+  return out.join("\n");
+}
 function lyricsSearchUrl(s: Song2, site: "g" | "u"): string {
   return site === "u" ? `https://www.uta-net.com/search/?Keyword=${encodeURIComponent(s.t)}&Aselect=2&Bselect=3` : `https://www.google.com/search?q=${encodeURIComponent(`${s.t} ${s.a} 歌詞`)}`;
 }
@@ -162,7 +181,11 @@ function SongLibrary() {
   }).sort((a: Song2, b: Song2) => (sort === "new" ? b.y - a.y : sort === "old" ? a.y - b.y : a.i - b.i));
   const cur = sel ? SONGS2.find((s: Song2) => s.id === sel) : undefined;
   useEffect(() => { window.scrollTo(0, 0); }, [sel]);
-  if (cur) return <SongDetail s={cur} onBack={() => setSel(null)} />;
+  if (cur) {
+    const rest = [...list.slice(list.findIndex((x: Song2) => x.id === cur.id) + 1), ...list].filter((x: Song2) => x.id !== cur.id && !db.lyr[x.id]);
+    const nx = rest[0];
+    return <SongDetail key={cur.id} s={cur} onBack={() => setSel(null)} onNext={nx ? () => setSel(nx.id) : undefined} />;
+  }
   const selStyle: CSSProperties = { font: "inherit", fontSize: 15, minHeight: 44, padding: "0 10px", borderRadius: 10, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary, flex: 1, minWidth: 0 };
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
@@ -243,37 +266,61 @@ function SongThemeQuiz(props: { s: Song2 }) {
   if (!on) return <Btn kind="primary" label="✏️ 主題單字小測驗（6 題）" onClick={() => setOn(true)} />;
   return <QuizRunner key={props.s.id} gen={gen} total={6} />;
 }
-function LyricsEditor(props: { s: Song2; onDone: () => void }) {
+function LyricsEditor(props: { s: Song2; onDone: () => void; onNext?: () => void }) {
   const t = useGrokTheme();
   const [v, setV] = useState(DB.lyr[props.s.id] ?? "");
   const [msg, setMsg] = useState("");
+  const [showBox, setShowBox] = useState(!!DB.lyr[props.s.id]);
+  const store = (raw: string): boolean => {
+    const x = cleanLyrics(raw, props.s);
+    if (lyricLines(x).length < 2) { setMsg("⚠️ 內容太少，請確認有複製到歌詞（至少 2 行）。"); setV(raw); setShowBox(true); return false; }
+    DB.lyr = { ...DB.lyr, [props.s.id]: x };
+    commit();
+    setMsg(`✅ 已儲存 ${lyricLines(x).length} 行（只存在這台裝置）`);
+    props.onDone();
+    return true;
+  };
   const save = () => {
     const x = v.trim();
-    DB.lyr = { ...DB.lyr };
-    if (x) DB.lyr[props.s.id] = x; else delete DB.lyr[props.s.id];
-    commit();
-    setMsg(x ? `✅ 已儲存 ${lyricLines(x).length} 行（只存在這台裝置）` : "已清除歌詞");
-    if (x) props.onDone();
+    if (!x) { DB.lyr = { ...DB.lyr }; delete DB.lyr[props.s.id]; commit(); setMsg("已清除歌詞"); return; }
+    store(x);
   };
-  const paste = () => {
+  const pasteSave = () => {
     try {
-      navigator.clipboard.readText().then((s: string) => { if (s) setV(s); else setMsg("剪貼簿是空的"); }).catch(() => setMsg("瀏覽器不允許直接讀剪貼簿，請長按下方輸入框選「貼上」。"));
-    } catch { setMsg("請長按下方輸入框選「貼上」。"); }
+      navigator.clipboard.readText().then((s: string) => { if (s && s.trim()) store(s); else { setMsg("剪貼簿是空的：請先到歌詞頁複製歌詞。"); setShowBox(true); } }).catch(() => { setMsg("這個瀏覽器不允許直接讀剪貼簿：請在下方框框長按 →「貼上」，貼上後會自動儲存。"); setShowBox(true); });
+    } catch { setMsg("請在下方框框長按 →「貼上」，貼上後會自動儲存。"); setShowBox(true); }
   };
+  const step = (n: string, body: ReactNode) => (
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <span style={{ flex: "0 0 auto", width: 26, height: 26, borderRadius: 999, background: t.fill.accentSubtle, border: `1px solid ${t.fill.accent}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>{n}</span>
+      <div style={{ display: "grid", gap: 6, flex: 1, minWidth: 0 }}>{body}</div>
+    </div>
+  );
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Btn label="🔍 搜尋歌詞（Google）" onClick={() => openExt(lyricsSearchUrl(props.s, "g"))} />
-        <Btn label="🔍 歌ネット" onClick={() => openExt(lyricsSearchUrl(props.s, "u"))} />
-        <Btn label="📋 從剪貼簿貼上" onClick={paste} />
-      </div>
-      <textarea value={v} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setV(e.target.value)} aria-label="貼上歌詞" placeholder={"1. 按上面「搜尋歌詞」，在歌詞網站全選複製\n2. 回到這裡貼上（長按 → 貼上）\n3. 按「儲存歌詞」"} rows={10} lang="ja" style={{ width: "100%", boxSizing: "border-box", font: "inherit", fontFamily: JA_FONT, fontSize: 16, lineHeight: 1.7, padding: 12, borderRadius: 10, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary }} />
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <Btn kind="primary" label="💾 儲存歌詞" onClick={save} />
-        {DB.lyr[props.s.id] ? <Btn label="取消" onClick={props.onDone} /> : null}
-        {msg ? <span role="status" style={{ fontSize: 13 }}>{msg}</span> : null}
-      </div>
-      <Note>歌詞受著作權保護，所以不會內建在公開的 App 裡；你貼上的歌詞只存在這台裝置的瀏覽器（也會包含在「成績 → 備份與還原」的備份裡），不會上傳。</Note>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
+      {step("1", <>
+        <Btn kind="primary" label={props.s.lu ? "📄 開啟這首歌的歌詞頁（歌ネット）" : "🔍 搜尋這首歌的歌詞"} onClick={() => openExt(lyricsPageUrl(props.s))} />
+        {props.s.lu ? <button type="button" onClick={() => openExt(lyricsSearchUrl(props.s, "g"))} style={{ font: "inherit", fontSize: 13, background: "none", border: "none", color: t.text.accent, textAlign: "left", padding: "8px 0", cursor: "pointer", minHeight: 36 }}>打不開？改用 Google 搜尋</button> : null}
+      </>)}
+      {step("2", <div style={{ fontSize: 14, lineHeight: 1.6 }}>在歌詞上<b>長按第一行</b> → 把選取範圍拖到最後一行 →「拷貝」。（多複製到標題、作詞作曲等文字沒關係，App 會自動清掉。）</div>)}
+      {step("3", <>
+        <Btn kind="primary" label="📋 貼上並儲存" onClick={pasteSave} />
+        <div style={{ fontSize: 12, color: t.text.secondary }}>iPhone 會跳出「貼上」小框，點一下就好。</div>
+      </>)}
+      {msg ? <div role="status" style={{ fontSize: 14, padding: "8px 12px", borderRadius: 8, background: t.bg.subtle }}>{msg}</div> : null}
+      {showBox ? (
+        <>
+          <textarea value={v} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setV(e.target.value)} onPaste={(e: { clipboardData: DataTransfer; preventDefault: () => void }) => { const x = e.clipboardData.getData("text"); if (x && x.trim()) { e.preventDefault(); setV(x); store(x); } }} aria-label="貼上歌詞" placeholder="在這裡長按 →「貼上」，會自動儲存" rows={8} lang="ja" style={{ width: "100%", boxSizing: "border-box", font: "inherit", fontFamily: JA_FONT, fontSize: 16, lineHeight: 1.7, padding: 12, borderRadius: 10, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary }} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Btn kind="primary" label="💾 儲存歌詞" onClick={save} />
+            {DB.lyr[props.s.id] ? <Btn label="取消" onClick={props.onDone} /> : null}
+          </div>
+        </>
+      ) : (
+        <button type="button" onClick={() => setShowBox(true)} style={{ font: "inherit", fontSize: 13, background: "none", border: "none", color: t.text.accent, textAlign: "left", padding: "8px 0", cursor: "pointer", minHeight: 36 }}>改用手動輸入／貼上框 ▾</button>
+      )}
+      {props.onNext ? <Btn label="⏭ 先跳過，下一首還沒有歌詞的歌" onClick={props.onNext} /> : null}
+      <Note>歌詞只存在這台裝置的瀏覽器（也會包含在「成績 → 備份與還原」的備份裡），不會上傳到網站。</Note>
     </div>
   );
 }
@@ -424,7 +471,7 @@ function LyricsVocab(props: { toks: (Tok[] | null)[]; tk: Tokenizer | null }) {
     </Card>
   );
 }
-function SongDetail(props: { s: Song2; onBack: () => void }) {
+function SongDetail(props: { s: Song2; onBack: () => void; onNext?: () => void }) {
   const t = useGrokTheme();
   const db = useDB();
   const s = props.s;
@@ -456,7 +503,7 @@ function SongDetail(props: { s: Song2; onBack: () => void }) {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
           <Btn on={fav} label={fav ? "♥ 已收藏" : "♡ 收藏"} onClick={() => { DB.fav = { ...DB.fav }; if (fav) delete DB.fav[s.id]; else DB.fav[s.id] = Date.now(); commit(); }} />
-          <Btn label="🔍 搜尋歌詞" onClick={() => openExt(lyricsSearchUrl(s, "g"))} />
+          <Btn label="📄 歌詞頁" onClick={() => openExt(lyricsPageUrl(s))} />
         </div>
       </Card>
       <Card title="📝 主題單字與學習重點">
@@ -474,7 +521,7 @@ function SongDetail(props: { s: Song2; onBack: () => void }) {
       <SongThemeQuiz s={s} />
       <Card title="🎤 歌詞練習">
         {edit || !lyr ? (
-          <LyricsEditor s={s} onDone={() => setEdit(false)} />
+          <LyricsEditor s={s} onDone={() => setEdit(false)} onNext={props.onNext} />
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
             <Chips small scroll value={mode} onChange={setMode} options={[["view", "📄 歌詞＋假名"], ["fill", "✏️ 填空"], ["order", "🔀 排序"], ["vocab", "📚 單字表"]]} />
