@@ -8,8 +8,8 @@ const KANJI: Kanji[] = KANJI_RAW.split("\n").map((l: string, i: number): Kanji =
 const KANJI_BY = new Map<string, Kanji>(KANJI.map((x: Kanji): [string, Kanji] => [x.k, x]));
 const ON_MAP = new Map<string, string[]>();
 KANJI.forEach((x: Kanji) => x.on.split("・").filter(Boolean).forEach((o: string) => { const h = toHiraS(o); ON_MAP.set(h, [...(ON_MAP.get(h) ?? []), x.k]); }));
-function kanjiVocab(k: string): Vocab[] {
-  return VOCAB.filter((v: Vocab) => v.w.includes(k)).slice(0, 4);
+function kanjiVocab(k: string, n = 4): Vocab[] {
+  return VOCAB.filter((v: Vocab) => v.w.includes(k)).slice(0, n);
 }
 function readPerturb(r: string): string[] {
   const out = new Set<string>();
@@ -44,11 +44,17 @@ function kanjiQ(pool: Kanji[], kind: string): Q {
   const e = pick(x.ex);
   const base = { sec: "kanji" as Sec, kana: [] as string[] };
   const exp = `${x.k}：${x.m}\n音讀：${x.on || "—"}　訓讀：${x.kun || "—"}\n${x.ex.map((y: KanjiEx) => `${y.w}（${y.r}）＝${y.m}`).join("\n")}`;
+  if (kd === "mean" && x.m.includes(x.k)) {
+    // 中文意思跟字面一樣時太簡單 → 改考例詞的意思（日文和中文常不同）
+    const em = new Set(x.ex.map((y: KanjiEx) => y.m));
+    const others = shuffle([...new Set(KANJI.filter((y: Kanji) => y.k !== x.k).flatMap((y: Kanji) => y.ex).filter((y: KanjiEx) => !em.has(y.m) && !y.w.includes(x.k)).map((y: KanjiEx) => y.m))]).slice(0, 3);
+    return { ...base, id: `kanji:${x.k}:m`, tag: "例詞 → 意思：這個詞在日文是什麼意思？", prompt: e.w, big: true, ja: true, reveal: `${e.w}（${e.r}）`, ...mc(e.m, others), exp, tts: e.r, ttsAfter: true, review: x.k };
+  }
   if (kd === "mean") {
     const han = (m: string): string[] => [...m].filter((c: string) => /[\u3400-\u9fff]/.test(c));
     const xs = new Set(han(x.m));
     const others = shuffle(KANJI.filter((y: Kanji) => y.k !== x.k && !han(y.m).some((c: string) => xs.has(c)))).slice(0, 3).map((y: Kanji) => y.m);
-    return { ...base, id: `kanji:${x.k}:m`, tag: "漢字 → 意思", prompt: "這個漢字是什麼意思？", big: true, ja: true, reveal: x.k, ...mc(x.m, others), exp, tts: e.r, ttsAfter: true, review: x.k };
+    return { ...base, id: `kanji:${x.k}:m`, tag: "漢字 → 意思：這個漢字是什麼意思？", prompt: x.k, big: true, ja: true, reveal: `${x.k}　音讀：${x.on || "—"}　訓讀：${x.kun || "—"}`, ...mc(x.m, others), exp, tts: e.r, ttsAfter: true, review: x.k };
   }
   if (kd === "write") {
     const ds = new Set<string>();
@@ -75,41 +81,161 @@ function kanjiQ(pool: Kanji[], kind: string): Q {
   }
   return { ...base, id: `kanji:${e.w}:r`, tag: "漢字讀音", prompt: `「${e.w}」怎麼念？（${e.m}）`, big: false, ja: true, optJa: true, ...mc(e.r, d), exp, tts: e.r, ttsAfter: true, review: e.w };
 }
-function KanjiDetail(props: { x: Kanji; onClose: () => void }) {
+/* ---- 筆順（KanjiVG，CC BY-SA 3.0），第一次開啟時載入 ---- */
+type KVG = { p: string[]; c: string[] };
+let KVG_P: Promise<Record<string, KVG>> | null = null;
+function loadKVG(): Promise<Record<string, KVG>> {
+  if (!KVG_P) KVG_P = fetch("kanjivg.json").then((r: Response) => { if (!r.ok) throw new Error(String(r.status)); return r.json() as Promise<Record<string, KVG>>; }).catch((e: unknown) => { KVG_P = null; throw e; });
+  return KVG_P;
+}
+function useKVG(k: string): { d: KVG | null; err: boolean } {
+  const [st, setSt] = useState<{ d: KVG | null; err: boolean }>({ d: null, err: false });
+  useEffect(() => {
+    let alive = true;
+    setSt({ d: null, err: false });
+    loadKVG().then((all: Record<string, KVG>) => { if (alive) setSt({ d: all[k] ?? null, err: !all[k] }); }).catch(() => { if (alive) setSt({ d: null, err: true }); });
+    return () => { alive = false; };
+  }, [k]);
+  return st;
+}
+function StrokeOrder(props: { k: string }) {
+  const t = useGrokTheme();
+  const { d, err } = useKVG(props.k);
+  const [step, setStep] = useState(-1);
+  const [play, setPlay] = useState(false);
+  const n = d ? d.p.length : 0;
+  useEffect(() => { setStep(-1); setPlay(false); }, [props.k]);
+  useEffect(() => {
+    if (!play || !d) return;
+    if (step >= n) { setPlay(false); return; }
+    const id = window.setTimeout(() => setStep((x: number) => x + 1), step < 0 ? 150 : 650);
+    return () => window.clearTimeout(id);
+  }, [play, step, d]);
+  if (err) return <Note>筆順資料需要網路才能第一次載入。</Note>;
+  if (!d) return <div style={{ fontSize: 13, color: t.text.secondary }}>⏳ 載入筆順…</div>;
+  const shown = step < 0 ? n : Math.min(step, n);
+  const box = (i: number, size: number, upto: number, cur: number, anim: boolean) => (
+    <svg key={i} viewBox="0 0 109 109" width={size} height={size} role="img" aria-label={`第 ${upto} 畫`} style={{ background: t.bg.subtle, borderRadius: 8, flex: "0 0 auto" }}>
+      <path d="M54.5 0V109M0 54.5H109" stroke={t.border.subtle} strokeWidth={0.8} strokeDasharray="3 3" fill="none" />
+      {d.p.map((pd: string, j: number) => (
+        <path key={j} d={pd} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth={j === cur ? 4.2 : 3.6}
+          stroke={j < upto ? (j === cur ? t.text.danger : t.text.primary) : size > 60 ? t.border.default : "transparent"}
+          pathLength={1} strokeDasharray={anim && j === cur ? "1" : undefined} style={anim && j === cur ? { animation: "kvgdraw 0.55s ease-out both" } : undefined} />
+      ))}
+    </svg>
+  );
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <style>{"@keyframes kvgdraw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}"}</style>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        {box(-1, 140, shown, step >= 1 && step <= n && play ? step - 1 : step >= 1 && step <= n ? step - 1 : -1, play)}
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 13, color: t.text.secondary }}>筆順 {step < 0 ? `共 ${n} 畫` : `第 ${Math.min(step, n)} ／ ${n} 畫`}</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Btn small kind="primary" label={play ? "⏸ 暫停" : "▶ 播放筆順"} onClick={() => { if (play) setPlay(false); else { if (step < 0 || step >= n) setStep(0); setPlay(true); } }} />
+            <Btn small label="◀" onClick={() => { setPlay(false); setStep((x: number) => Math.max(1, (x < 0 ? n : x) - 1)); }} />
+            <Btn small label="▶" onClick={() => { setPlay(false); setStep((x: number) => (x < 0 || x >= n ? 1 : x + 1)); }} />
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 4 }} aria-label="逐筆分解">
+        {d.p.map((_: string, i: number) => box(i, 44, i + 1, i, false))}
+      </div>
+    </div>
+  );
+}
+function KanjiLinks(props: { w: string; onPick?: (x: Kanji) => void }) {
+  const t = useGrokTheme();
+  const ks = [...new Set([...props.w].filter((c: string) => KANJI_BY.has(c)))];
+  if (!ks.length) return null;
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ fontSize: 12, color: t.text.secondary }}>漢字：</span>
+      {ks.map((c: string) => (
+        <button key={c} type="button" aria-label={`查看漢字 ${c}`} onClick={() => (props.onPick ? props.onPick(KANJI_BY.get(c)!) : openKanji(c))} style={{ font: "inherit", cursor: "pointer", minHeight: 36, minWidth: 40, padding: "2px 10px", borderRadius: 8, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary, display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <span lang="ja" style={{ fontFamily: JA_FONT, fontSize: 18 }}>{c}</span>
+          <span style={{ fontSize: 11, color: t.text.secondary }}>{(KANJI_BY.get(c)?.m ?? "").split(/[、；]/)[0]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+let PENDING_KANJI: string | null = null;
+function openKanji(k: string): void {
+  PENDING_KANJI = k;
+  window.dispatchEvent(new CustomEvent("n3nav", { detail: "kanji" }));
+}
+function KanjiDetail(props: { x: Kanji; onClose: () => void; onPick: (x: Kanji) => void }) {
   const t = useGrokTheme();
   const x = props.x;
-  const rel = kanjiVocab(x.k).filter((v: Vocab) => !x.ex.some((e: KanjiEx) => e.w === v.w));
+  const rel = kanjiVocab(x.k, 12).filter((v: Vocab) => !x.ex.some((e: KanjiEx) => e.w === v.w)).slice(0, 8);
   const st = DB.kj[x.k];
+  const { d } = useKVG(x.k);
+  const same = KANJI.filter((y: Kanji) => y.k !== x.k && y.on && x.on && y.on.split("・").some((o: string) => x.on.split("・").includes(o))).slice(0, 8);
+  const prev = KANJI[x.i - 1];
+  const next = KANJI[x.i + 1];
+  const row = { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${t.border.subtle}`, paddingTop: 8 } as const;
+  const mini = (y: Kanji) => (
+    <button key={y.k} type="button" onClick={() => props.onPick(y)} aria-label={`${y.k}：${y.m}`} style={{ font: "inherit", cursor: "pointer", minHeight: 44, minWidth: 44, padding: "2px 8px", borderRadius: 8, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary, display: "inline-flex", gap: 4, alignItems: "center" }}>
+      <span lang="ja" style={{ fontFamily: JA_FONT, fontSize: 20 }}>{y.k}</span>
+      <span style={{ fontSize: 11, color: t.text.secondary }}>{y.m.split(/[、；]/)[0]}</span>
+    </button>
+  );
   return (
     <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+        <Btn small label="← 回漢字表" onClick={props.onClose} />
+        <div style={{ display: "flex", gap: 6 }}>
+          {prev ? <Btn small label={`‹ ${prev.k}`} onClick={() => props.onPick(prev)} /> : null}
+          {next ? <Btn small label={`${next.k} ›`} onClick={() => props.onPick(next)} /> : null}
+        </div>
+      </div>
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <div lang="ja" style={{ fontFamily: JA_FONT, fontSize: 72, lineHeight: 1, minWidth: 80, textAlign: "center" }}>{x.k}</div>
         <div style={{ display: "grid", gap: 4, flex: 1, minWidth: 180 }}>
           <div style={{ fontSize: 17, fontWeight: 600 }}>{x.m}</div>
           <div lang="ja" style={{ fontFamily: JA_FONT }}><span style={{ fontSize: 12, color: t.text.secondary }}>音讀　</span>{x.on || "—"}</div>
           <div lang="ja" style={{ fontFamily: JA_FONT }}><span style={{ fontSize: 12, color: t.text.secondary }}>訓讀　</span>{x.kun || "—"}</div>
-          <div style={{ fontSize: 12, color: t.text.secondary }}>{x.st} 畫{st ? `・答對 ${st.c}／答錯 ${st.w}` : ""}</div>
+          <div style={{ fontSize: 12, color: t.text.secondary }}>{x.st} 畫・第 {x.i + 1}／{KANJI.length} 字{st ? `・答對 ${st.c}／答錯 ${st.w}` : ""}</div>
         </div>
       </div>
+      {d && d.c.length ? (
+        <div style={{ ...row, marginTop: 10 }}>
+          <span style={{ fontSize: 13, color: t.text.secondary }}>🧩 部件</span>
+          {d.c.map((c: string) => (KANJI_BY.has(c) ? mini(KANJI_BY.get(c)!) : <span key={c} lang="ja" style={{ fontFamily: JA_FONT, fontSize: 20, padding: "2px 8px", borderRadius: 8, background: t.bg.subtle }}>{c}</span>))}
+        </div>
+      ) : null}
+      <div style={{ ...row, marginTop: 10, display: "block" }}>
+        <StrokeOrder k={x.k} />
+      </div>
       <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>📘 例詞</div>
         {x.ex.map((e: KanjiEx) => (
-          <div key={e.w} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${t.border.subtle}`, paddingTop: 8 }}>
+          <div key={e.w} style={row}>
             <Ruby w={e.w} r={e.r} size={22} />
             <span>{e.m}</span>
             <Speak text={e.r} />
           </div>
         ))}
+        {rel.length ? <div style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>📚 單字庫裡含「{x.k}」的詞（{rel.length}）</div> : null}
         {rel.map((v: Vocab) => (
-          <div key={v.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", borderTop: `1px solid ${t.border.subtle}`, paddingTop: 8 }}>
-            <Ruby w={v.w} r={v.r} size={18} />
-            <span style={{ fontSize: 14 }}>{v.m}</span>
-            <span style={{ fontSize: 12, color: t.text.secondary }}>（單字庫）</span>
+          <div key={v.id} style={{ ...row, alignItems: "flex-start" }}>
+            <div style={{ display: "grid", gap: 2, flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <Ruby w={v.w} r={v.r} size={18} />
+                <span style={{ fontSize: 14 }}>{v.m}</span>
+              </div>
+              <div lang="ja" style={{ fontFamily: JA_FONT, fontSize: 13, lineHeight: 1.9, color: t.text.secondary }}><Rich text={v.ex} /></div>
+            </div>
             <Speak text={v.r} />
           </div>
         ))}
-      </div>
-      <div style={{ marginTop: 12 }}>
-        <Btn small label="← 回漢字表" onClick={props.onClose} />
+        {same.length ? (
+          <div style={{ ...row }}>
+            <span style={{ fontSize: 13, color: t.text.secondary }}>🔊 同音讀的漢字</span>
+            {same.map(mini)}
+          </div>
+        ) : null}
       </div>
     </Card>
   );
@@ -119,7 +245,12 @@ function KanjiTab() {
   const [sub, setSub] = useState<"list" | "quiz">("list");
   const [range, setRange] = useState("1-100");
   const [kind, setKind] = useState("mix");
-  const [sel, setSel] = useState<Kanji | null>(null);
+  const [sel, setSel] = useState<Kanji | null>(() => { const k = PENDING_KANJI; PENDING_KANJI = null; return k ? KANJI_BY.get(k) ?? null : null; });
+  useEffect(() => {
+    const h = () => { const k = PENDING_KANJI; PENDING_KANJI = null; if (k && KANJI_BY.has(k)) { setSub("list"); setSel(KANJI_BY.get(k)!); window.scrollTo(0, 0); } };
+    window.addEventListener("n3nav", h);
+    return () => window.removeEventListener("n3nav", h);
+  }, []);
   const [qq, setQq] = useState("");
   const ranges: [string, string][] = [["1-100", "1–100"], ["101-200", "101–200"], ["201-300", "201–300"], ["301-367", `301–${KANJI.length}`], ["all", "全部"], ["weak", "答錯過的"]];
   const pool = useMemo(() => kanjiPool(range), [range]);
@@ -131,7 +262,7 @@ function KanjiTab() {
       <Chips small scroll={NARROW()} value={range} onChange={(v: string) => { setRange(v); setSel(null); }} options={ranges} />
       {sub === "list" ? (
         sel ? (
-          <KanjiDetail x={sel} onClose={() => setSel(null)} />
+          <KanjiDetail x={sel} onClose={() => setSel(null)} onPick={(y: Kanji) => { setSel(y); window.scrollTo(0, 0); }} />
         ) : (
           <Card>
             <input
@@ -189,6 +320,46 @@ function vsrsNext(s: VS | undefined, g: number): VS {
 function ivLabel(iv: number): string {
   return iv === 0 ? "今天再看" : iv < 30 ? `${iv} 天後` : `${Math.round(iv / 30)} 個月後`;
 }
+function SrsStats(props: { items: Vocab[] }) {
+  const t = useGrokTheme();
+  const db = useDB();
+  const [open, setOpen] = useState(false);
+  const td = dayNum();
+  const st = props.items.map((v: Vocab) => db.vsrs[v.id]).filter(Boolean) as VS[];
+  const learning = st.filter((x: VS) => x.iv < 7).length;
+  const young = st.filter((x: VS) => x.iv >= 7 && x.iv < 21).length;
+  const mature = st.filter((x: VS) => x.iv >= 21).length;
+  const days = [0, 1, 2, 3, 4, 5, 6].map((d: number) => st.filter((x: VS) => (d === 0 ? x.due <= td : x.due === td + d)).length);
+  const mx = Math.max(1, ...days);
+  const wk = ["日", "一", "二", "三", "四", "五", "六"];
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} style={{ font: "inherit", fontSize: 13, background: "none", border: "none", color: t.text.accent, cursor: "pointer", padding: "8px 0", minHeight: 36 }}>{open ? "▲ 收起記憶卡統計" : "📈 記憶卡統計與未來 7 天複習量"}</button>
+      {open ? (
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, fontSize: 12, textAlign: "center" }}>
+            {[["未學", props.items.length - st.length, t.text.secondary], ["學習中", learning, t.text.warning], ["熟悉", young, t.text.accent], ["精熟 21天+", mature, t.text.success]].map(([l, v, c]: (string | number)[]) => (
+              <div key={String(l)} style={{ background: t.bg.subtle, borderRadius: 8, padding: "6px 2px", borderTop: `3px solid ${String(c)}` }}><div style={{ fontSize: 18, fontWeight: 700 }}>{v}</div>{l}</div>
+            ))}
+          </div>
+          <div aria-label="未來 7 天到期張數" style={{ display: "flex", gap: 6, alignItems: "flex-end", height: 90 }}>
+            {days.map((v: number, i: number) => {
+              const dd = new Date(Date.now() + i * 86400000);
+              return (
+                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, height: "100%", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 11 }}>{v}</span>
+                  <div style={{ width: "100%", height: `${(v / mx) * 56}px`, minHeight: 2, background: i === 0 ? t.text.danger : t.text.accent, borderRadius: 4 }} />
+                  <span style={{ fontSize: 11, color: t.text.secondary }}>{i === 0 ? "今天" : wk[dd.getDay()]}</span>
+                </div>
+              );
+            })}
+          </div>
+          <Note>學習中＝間隔不到 7 天；熟悉＝7–20 天；精熟＝21 天以上才會再出。按「記得／簡單」間隔會拉長，按「忘了」會重新開始。</Note>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 function VocabSRS(props: { items: Vocab[] }) {
   const t = useGrokTheme();
   const db = useDB();
@@ -240,6 +411,7 @@ function VocabSRS(props: { items: Vocab[] }) {
           <span>📚 已學 {learned}/{props.items.length}</span>
           <span>本次 {done} 張</span>
         </div>
+        <SrsStats items={props.items} />
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
           <span style={{ fontSize: 13, color: t.text.secondary }}>每天新卡</span>
           <Chips small value={per} onChange={(v: string) => { setPer(v); DB.vsrsPer = Number(v); commit(); }} options={[["5", "5"], ["10", "10"], ["20", "20"], ["30", "30"]]} />
@@ -255,6 +427,7 @@ function VocabSRS(props: { items: Vocab[] }) {
               <div style={{ display: "flex", justifyContent: "center", gap: 8 }}><Speak text={cur.r} label="單字" /><Speak text={cur.ex} label="例句" /></div>
               <div lang="ja" style={{ fontFamily: JA_FONT, lineHeight: 2, fontSize: 15 }}><Rich text={cur.ex} /></div>
               <div style={{ fontSize: 13, color: t.text.secondary }}>{cur.tr}</div>
+              <KanjiLinks w={cur.w} />
               <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                 {btn(0, "忘了", t.text.danger)}
                 {btn(1, "困難", t.text.warning)}
@@ -276,8 +449,13 @@ function VocabSRS(props: { items: Vocab[] }) {
         <Card>
           <div style={{ fontSize: 18, fontWeight: 600 }}>🎉 今天的單字卡完成了！</div>
           <div style={{ marginTop: 6 }}>
-            <Note>{fresh.length ? `明天會再出新卡；想多學可以把「每天新卡」調高。` : "這個範圍的單字都學過了，之後只會出到期的複習卡。"}</Note>
+            <Note>{fresh.length ? `明天會再出新卡；想多學可以把「每天新卡」調高，或按下面「再學 5 張」。` : "這個範圍的單字都學過了，之後只會出到期的複習卡。"}</Note>
           </div>
+          {fresh.length ? (
+            <div style={{ marginTop: 10 }}>
+              <Btn kind="primary" label="➕ 再學 5 張新卡" onClick={() => { DB.vsrsNew = { d: td, n: Math.max(0, newToday - 5) }; commit(); }} />
+            </div>
+          ) : null}
         </Card>
       )}
     </div>
