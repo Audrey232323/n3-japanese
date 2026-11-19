@@ -1,5 +1,5 @@
 /* 日文N3練習 service worker：網頁優先抓最新版（3 秒內沒回應就用快取），其餘檔案快取優先，離線可用 */
-const CACHE = "n3-02f393d3a2";
+const CACHE = "n3-c90f464b1d";
 const DICT = "n3-dict-v1";
 const ASSETS = ["./", "./index.html", "./manifest.json", "./kuromoji.js", "./kanjivg.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-192.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 self.addEventListener("install", (e) => {

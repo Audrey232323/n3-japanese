@@ -7958,13 +7958,14 @@ function TodayCard(props: { go: (tab: string, km?: KMode) => void }) {
           📅 今日任務 {done}/{total}
           {done === total ? " 🎉 全部完成！" : ""}
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, color: t.text.secondary }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: t.text.secondary, whiteSpace: "nowrap", flexWrap: "wrap" }}>
           <button type="button" onClick={() => props.go("kana", "weak5")} aria-label="練習今日最弱的 5 個假名" style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: t.fill.accentSubtle, border: `1px solid ${t.fill.accent}`, borderRadius: 999, padding: "6px 12px", minHeight: 36, color: t.text.primary }}>
             🎯 最弱 5 字
           </button>
           <span title="連續練習天數">🔥 {streakDays()} 天</span>
+          <span title="每日目標（到「成績」頁可調整）" style={{ color: (db.hist[dkey(new Date())] ?? 0) >= (db.goal ?? 30) ? t.text.success : undefined }}>🎯 {db.hist[dkey(new Date())] ?? 0}/{db.goal ?? 30}</span>
           <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: "transparent", border: `1px solid ${t.border.default}`, borderRadius: 999, padding: "6px 12px", minHeight: 36, color: t.text.primary }}>
-            {open ? "▲ 收合任務" : "▼ 查看任務"}
+            {open ? "▲ 收合" : "▼ 任務"}
           </button>
         </div>
       </div>
