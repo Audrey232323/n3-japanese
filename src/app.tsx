@@ -3806,6 +3806,7 @@ function btnStyle(t: T, kind: "primary" | "plain", on: boolean, small: boolean):
     borderRadius: 999,
     padding: small ? "6px 12px" : "9px 16px",
     minHeight: small ? 40 : 44,
+    minWidth: small ? 40 : 44,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
