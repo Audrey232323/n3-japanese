@@ -1615,17 +1615,60 @@ function isHira(c: string): boolean {
 }
 
 let RATE = 0.9;
+let LAST_TAP = 0;
+if (typeof window !== "undefined") window.addEventListener("pointerdown", () => { LAST_TAP = Date.now(); }, { capture: true, passive: true });
+let JA_VOICE: SpeechSynthesisVoice | null = null;
+function jaVoice(): SpeechSynthesisVoice | null {
+  if (JA_VOICE) return JA_VOICE;
+  try {
+    const vs = window.speechSynthesis.getVoices().filter((x: SpeechSynthesisVoice) => x.lang.toLowerCase().replace("_", "-").startsWith("ja"));
+    JA_VOICE = vs.find((x: SpeechSynthesisVoice) => /kyoko|otoya|o-ren|google/i.test(x.name)) ?? vs[0] ?? null;
+  } catch {
+    JA_VOICE = null;
+  }
+  return JA_VOICE;
+}
+if (typeof window !== "undefined") {
+  try {
+    window.speechSynthesis?.addEventListener?.("voiceschanged", () => {
+      JA_VOICE = null;
+    });
+  } catch {
+    /* 無語音 */
+  }
+  // iOS：第一次觸控時先播一個無聲片段，解鎖之後自動播放（聽力題）的語音
+  const unlock = (): void => {
+    window.removeEventListener("touchend", unlock);
+    window.removeEventListener("click", unlock);
+    try {
+      const ss = window.speechSynthesis;
+      if (!ss || ss.speaking) return;
+      const u = new SpeechSynthesisUtterance(" ");
+      u.volume = 0;
+      u.lang = "ja-JP";
+      ss.speak(u);
+    } catch {
+      /* 無語音 */
+    }
+  };
+  window.addEventListener("touchend", unlock, { passive: true });
+  window.addEventListener("click", unlock);
+}
 function speak(text: string, rate?: number): void {
   try {
     const ss = window.speechSynthesis;
     if (!ss) return;
-    ss.cancel();
     const u = new SpeechSynthesisUtterance(kanaOf(text));
     u.lang = "ja-JP";
     u.rate = rate ?? RATE;
-    const v = ss.getVoices().find((x: SpeechSynthesisVoice) => x.lang.toLowerCase().replace("_", "-").startsWith("ja"));
+    const v = jaVoice();
     if (v) u.voice = v;
-    ss.speak(u);
+    if (ss.paused) ss.resume();
+    // iOS Safari：cancel 後立刻 speak 常被吃掉，所以只在正在播放時才 cancel，並稍等一下再播
+    if (ss.speaking || ss.pending) {
+      ss.cancel();
+      window.setTimeout(() => ss.speak(u), 60);
+    } else ss.speak(u);
   } catch {
     /* 不支援語音 */
   }
@@ -1650,11 +1693,13 @@ type DBT = {
   vsrs: Record<string, { due: number; iv: number; ef: number; n: number }>;
   vsrsNew: { d: number; n: number };
   vsrsPer: number;
+  lyr: Record<string, string>;
+  fav: Record<string, number>;
 };
 const KEY = "n3_practice_v1";
 let STORAGE_OK = true;
 function freshDB(): DBT {
-  return { stats: {}, wrong: [], weak: {}, known: {}, lyrics: "", furi: true, best: {}, srs: {}, ks: {}, daily: { d: "", c: {} }, hist: {}, onb: 0, kj: {}, vsrs: {}, vsrsNew: { d: 0, n: 0 }, vsrsPer: 10 };
+  return { stats: {}, wrong: [], weak: {}, known: {}, lyrics: "", furi: true, best: {}, srs: {}, ks: {}, daily: { d: "", c: {} }, hist: {}, onb: 0, kj: {}, vsrs: {}, vsrsNew: { d: 0, n: 0 }, vsrsPer: 10, lyr: {}, fav: {} };
 }
 function loadDB(): DBT {
   const base = freshDB();
@@ -3665,7 +3710,12 @@ function btnStyle(t: T, kind: "primary" | "plain", on: boolean, small: boolean):
     fontSize: small ? 13 : 14,
     cursor: "pointer",
     borderRadius: 999,
-    padding: small ? "4px 10px" : "7px 14px",
+    padding: small ? "6px 12px" : "9px 16px",
+    minHeight: small ? 40 : 44,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
     border: `1px solid ${t.border.default}`,
     background: t.bg.base,
     color: t.text.primary,
@@ -3701,7 +3751,7 @@ function Speak(props: { text: string; label?: string }) {
       title="播放發音"
       aria-label={props.label ? `播放：${props.label}` : "播放日語發音"}
       onClick={() => speak(props.text)}
-      style={{ ...btnStyle(t, "plain", false, true), padding: "3px 9px" }}
+      style={{ ...btnStyle(t, "plain", false, true), padding: "4px 10px", minHeight: 40, minWidth: 44 }}
     >
       🔊{props.label ? " " + props.label : ""}
     </button>
@@ -3772,6 +3822,13 @@ function QuizRunner(props: { gen: () => Q; total?: number; onResult?: (q: Q, ok:
   const [picked, setPicked] = useState<number | null>(null);
   const [score, setScore] = useState({ c: 0, n: 0 });
   const [done, setDone] = useState(false);
+  const topRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = topRef.current;
+    if (!el || Date.now() - LAST_TAP > 900) return;
+    const r = el.getBoundingClientRect();
+    if (r.top > window.innerHeight * 0.5) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, []);
 
   useEffect(() => {
     if (q.autoPlay && q.tts) {
@@ -3847,6 +3904,7 @@ function QuizRunner(props: { gen: () => Q; total?: number; onResult?: (q: Q, ok:
   const longOpts = q.options.some((o: string) => o.length > 12);
   return (
     <Card>
+      <div ref={topRef} aria-hidden="true" style={{ height: 0, scrollMarginTop: 12 }} />
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <span style={{ fontSize: 12, color: t.text.accent, fontWeight: 600 }}>{q.tag ?? SEC_NAME[q.sec]}</span>
         <span style={{ fontSize: 12, color: t.text.secondary }}>
@@ -5522,12 +5580,10 @@ function KanaTab() {
         <div style={{ display: "grid", gap: 12 }}>
           <Card>
             <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                <Chips value={script} onChange={(v: Script) => { setScript(v); setWeakOnly(false); }} options={[["hira", "平假名"], ["kata", "片假名"], ["mix", "混合"]]} />
-                <span aria-hidden="true" style={{ color: t.text.secondary }}>|</span>
-                <Chips value={dir} onChange={setDir} options={[["k2r", "看假名選讀音"], ["r2k", "看讀音選假名"]]} />
-                <span aria-hidden="true" style={{ color: t.text.secondary }}>|</span>
-                <Btn on={weakOnly} label={weakOnly ? "✓ 只練弱點" : "只練弱點"} onClick={() => setWeakOnly(!weakOnly)} />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                <Chips small value={script} onChange={(v: Script) => { setScript(v); setWeakOnly(false); }} options={[["hira", "平假名"], ["kata", "片假名"], ["mix", "混合"]]} />
+                <Btn small on={weakOnly} label={weakOnly ? "✓ 只練弱點" : "只練弱點"} onClick={() => setWeakOnly(!weakOnly)} />
+                <Chips small value={dir} onChange={setDir} options={[["k2r", "看假名選讀音"], ["r2k", "看讀音選假名"]]} />
               </div>
               {weakOnly ? <Note>只出你答錯過、還沒練回來的假名（不限行）。</Note> : <RowPicker rows={rows} onChange={setRows} kata={script === "kata"} />}
             </div>
@@ -6446,7 +6502,7 @@ function SongVocabQuiz() {
     </Card>
   );
 }
-function SongTab() {
+function SongTabOld() {
   const t = useGrokTheme();
   const yt = (q: string) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
   const ly = (q: string) => `https://www.google.com/search?q=${encodeURIComponent(q + " 歌詞")}`;
@@ -7595,11 +7651,11 @@ function TodayCard(props: { go: (tab: string, km?: KMode) => void }) {
           {done === total ? " 🎉 全部完成！" : ""}
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, color: t.text.secondary }}>
-          <button type="button" onClick={() => props.go("kana", "weak5")} aria-label="練習今日最弱的 5 個假名" style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: t.fill.accentSubtle, border: `1px solid ${t.fill.accent}`, borderRadius: 999, padding: "0 10px", color: t.text.primary }}>
+          <button type="button" onClick={() => props.go("kana", "weak5")} aria-label="練習今日最弱的 5 個假名" style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: t.fill.accentSubtle, border: `1px solid ${t.fill.accent}`, borderRadius: 999, padding: "6px 12px", minHeight: 36, color: t.text.primary }}>
             🎯 最弱 5 字
           </button>
           <span title="連續練習天數">🔥 {streakDays()} 天</span>
-          <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: "transparent", border: `1px solid ${t.border.default}`, borderRadius: 999, padding: "0 10px", color: t.text.primary }}>
+          <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: "transparent", border: `1px solid ${t.border.default}`, borderRadius: 999, padding: "6px 12px", minHeight: 36, color: t.text.primary }}>
             {open ? "▲ 收合任務" : "▼ 查看任務"}
           </button>
         </div>
@@ -7649,18 +7705,15 @@ export default function App() {
         <div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>日文 N3 練習</div>
           <div style={{ fontSize: 14, color: t.text.secondary, marginTop: 4, display: n > 0 && NARROW() ? "none" : undefined }}>50音 → 單字 → 文法 → 模擬考 → 聽力 → 歌曲。點 🔊 聽日語發音，成績與錯題自動保存在這個瀏覽器。</div>
-          <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 13, color: t.text.secondary, flexWrap: "wrap" }}>
-            <span>總答題 {n}</span>
-            <span>正確率 {n ? Math.round((tot.c / n) * 100) : 0}%</span>
-            <span>錯題 {db.wrong.length}</span>
-            <span>弱點假名 {Object.keys(db.weak).filter((c: string) => weakScore(c) > 0).length}</span>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 13, color: t.text.secondary, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+            <span>答題 {n}・正確 {n ? Math.round((tot.c / n) * 100) : 0}%・錯題 {db.wrong.length}・弱點 {Object.keys(db.weak).filter((c: string) => weakScore(c) > 0).length}</span>
             <button
               type="button"
               onClick={() => {
                 DB.furi = !DB.furi;
                 commit();
               }}
-              style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: "transparent", border: `1px solid ${t.border.default}`, borderRadius: 999, padding: "0 10px", color: t.text.primary }}
+              style={{ font: "inherit", fontSize: 13, cursor: "pointer", background: "transparent", border: `1px solid ${t.border.default}`, borderRadius: 999, padding: "6px 12px", minHeight: 36, color: t.text.primary }}
             >
               ふりがな：{db.furi ? "顯示" : "隱藏"}
             </button>
@@ -7719,3 +7772,657 @@ export default function App() {
 }
 
 
+
+const SONGS2_RAW = `86f0c3c1|Lemon|米津玄師|2018|J-POP|ドラマ「アンナチュラル」主題歌|中級|SX_ViT4Ra7k|檸檬:レモン:檸檬;忘れる:わすれる:忘記;苦い:にがい:苦的|歌名是檸檬。主題是失去重要的人後的思念，適合學「～ても」「まだ～ている」等表達心情持續的說法。
+490c074a|KICK BACK|米津玄師|2022|アニメ|「チェンソーマン」OP|上級|M2cckDmNLMI|努力:どりょく:努力;幸せ:しあわせ:幸福;欲しい:ほしい:想要|節奏極快、很多口語與反覆句，適合練聽力反應。主題是對「努力就能幸福」的吶喊。
+04425e2f|感電|米津玄師|2020|J-POP|ドラマ「MIU404」主題歌|上級|UFQEttrn6CQ|電気:でんき:電;走る:はしる:跑;夜:よる:夜晚|歌名「感電」＝觸電。都會夜晚的追逐感，口語語尾多，適合學「～ちゃう」「～じゃん」。
+a800cb1c|馬と鹿|米津玄師|2019|J-POP|ドラマ「ノーサイド・ゲーム」主題歌|中級|ptnYBctoexk|馬:うま:馬;鹿:しか:鹿;痛み:いたみ:疼痛|「馬鹿（ばか）」拆成馬與鹿，雙關「傻瓜」。主題是帶著傷痛也要往前。
+50a57f0d|さよーならまたいつか！|米津玄師|2024|J-POP|連続テレビ小説「虎に翼」主題歌|中級|-wb2PAx6aEs|雨:あめ:雨;別れ:わかれ:離別;いつか:いつか:總有一天|歌名「再見，總有一天再見！」。可學「また～」「いつか」等時間副詞。
+c0da0563|打上花火|DAOKO×米津玄師|2017|アニメ|映画「打ち上げ花火、下から見るか？横から見るか？」主題歌|中級|-tKVN2mAKRI|花火:はなび:煙火;夏:なつ:夏天;打ち上げる:うちあげる:發射（煙火）|夏日煙火大會的回憶。學「打ち上げ花火（升空煙火）」與「～たい」願望表達。
+337d7d8e|パプリカ|Foorin|2018|J-POP|NHK 2020応援ソング|初級|rWTjsCjH2kM|花:はな:花;夏:なつ:夏天;晴れる:はれる:放晴|兒童合唱曲，用字簡單、節奏明快，適合初學者跟唱。
+367f9424|うっせぇわ|Ado|2020|J-POP||上級|Qp3b-RXtz4w|うるさい:うるさい:吵、囉嗦;常識:じょうしき:常識;社会:しゃかい:社會|「うっせぇわ」是「うるさいわ」的粗魯口語。可學口語音變：〜ない→〜ねぇ。
+06e52299|新時代|Ado|2022|アニメ|「ONE PIECE FILM RED」主題歌|上級|1FliVTcX8bQ|時代:じだい:時代;世界:せかい:世界;変える:かえる:改變|主題是開創新時代。可學「～ようぜ」（～吧，男性口語）與意志形。
+8555dfff|唱|Ado|2023|J-POP|USJ ハロウィーン・ホラー・ナイト テーマソング|上級|pgXpM4l_MwI|唱える:となえる:唸、喊;踊る:おどる:跳舞;祭り:まつり:祭典|節奏強烈的派對曲，口語與擬聲詞多，適合高階聽力挑戰。
+861476eb|踊|Ado|2021|J-POP||上級|YnSW8ian29w|踊る:おどる:跳舞;音:おと:聲音;夜:よる:夜晚|歌名「踊」＝跳舞。學動詞「踊る」的各種變化與命令形。
+c4cd5641|夜に駆ける|YOASOBI|2019|J-POP||上級|x8VYWazR5mE|駆ける:かける:奔跑;夜:よる:夜晚;二人:ふたり:兩人|改編自小說《タナトスの誘惑》。語速快，「～に駆ける」＝朝…奔去。
+80eeaa52|アイドル|YOASOBI|2023|アニメ|「【推しの子】」OP|上級|ZRtdQ81jPUQ|偶像:ぐうぞう:偶像;嘘:うそ:謊言;完璧:かんぺき:完美|《我推的孩子》OP。主題是偶像的完美與謊言，可學「～みたい」「～なんて」。
+0b09d323|群青|YOASOBI|2020|J-POP||中級|Y4nEEZwckuU|青:あお:藍色;好き:すき:喜歡;描く:えがく:描繪|主題是堅持喜歡的事、努力畫下去。歌名「群青」是深藍色。
+97799431|祝福|YOASOBI|2022|アニメ|「機動戦士ガンダム 水星の魔女」OP|上級|3eytpBOkOFA|祝福:しゅくふく:祝福;未来:みらい:未來;逃げる:にげる:逃避|《水星的魔女》OP。學「逃げる」「進む」等表示選擇的動詞。
+7c931785|怪物|YOASOBI|2021|アニメ|「BEASTARS」第2期 OP|上級|dy90tA3TT1c|怪物:かいぶつ:怪物;正しい:ただしい:正確的;本当:ほんとう:真正的|《BEASTARS》OP。主題是內心的本能與正義。
+043d723c|勇者|YOASOBI|2023|アニメ|「葬送のフリーレン」OP|中級|OIBODIPC_8Y|勇者:ゆうしゃ:勇者;旅:たび:旅程;思い出:おもいで:回憶|《葬送的芙莉蓮》OP。主題是旅程結束後的回憶，可學「～た後で」。
+a91dfafc|ハルジオン|YOASOBI|2020|J-POP||中級|kzdJkT4kp-A|花:はな:花;過去:かこ:過去;忘れる:わすれる:忘記|ハルジオン是一種小白花（春紫菀）。主題是放下過去往前走。
+009e8210|真夜中のドア〜stay with me|松原みき|1979|シティポップ||初級|lags8E4hvow|真夜中:まよなか:深夜;扉:とびら:門;季節:きせつ:季節|城市流行經典。語速慢、發音清楚，適合學「～ないで」請求別做某事。
+cf49274a|プラスティック・ラブ|竹内まりや|1984|シティポップ||中級|WpQCCB0Lpik|恋:こい:戀愛;夜:よる:夜晚;踊る:おどる:跳舞|城市流行代表作。主題是都會夜晚與不認真的戀愛。
+af47896d|RIDE ON TIME|山下達郎|1980|シティポップ||中級|D3JuhTytFgI|時:とき:時間;夢:ゆめ:夢想;走る:はしる:奔跑|山下達郎代表作，曲風明亮。學「～に乗る」（搭上…）。
+2c00f4e4|クリスマス・イブ|山下達郎|1983|シティポップ||初級|1-xwxyHOyVw|雨:あめ:雨;雪:ゆき:雪;夜:よる:夜晚|日本聖誕節經典，在冬夜等待戀人的情歌。學「～へと変わる」（漸漸變成…）。
+e3be4a09|君は天然色|大滝詠一|1981|シティポップ||中級|L-hyY-1luHs|色:いろ:顏色;思い出:おもいで:回憶;夏:なつ:夏天|歌名「你是天然色彩」。主題是回憶中鮮明的你。
+df403e7a|恋におちて -Fall in love-|小林明子|1985|昭和・平成名曲|ドラマ「金曜日の妻たちへIII」主題歌|初級|dbHPwFo_28o|恋:こい:戀愛;電話:でんわ:電話;週末:しゅうまつ:週末|80 年代名曲，語速慢。學「～に落ちる」（墜入…）。
+1c288dcf|*～アスタリスク～|ORANGE RANGE|2005|アニメ|「BLEACH」OP1|上級|MS7qWGeOTfY|星:ほし:星星;夢:ゆめ:夢想;走る:はしる:奔跑|《BLEACH》第一首 OP，節奏輕快、饒舌段多。
+0dbbd69c|D-tecnoLife|UVERworld|2005|アニメ|「BLEACH」OP2|上級|L-u3fkgZkO0|心:こころ:心;傷:きず:傷;強い:つよい:強|《BLEACH》OP2。搖滾快歌，學「～ても」「～ながら」。
+b6d3743a|一輪の花|HIGH and MIGHTY COLOR|2006|アニメ|「BLEACH」OP3|上級|WGEVZONi2EI|花:はな:花;一輪:いちりん:一朵;咲く:さく:開花|《BLEACH》OP3。「一輪」是花的量詞（一朵）。
+31a73332|Rolling star|YUI|2007|アニメ|「BLEACH」OP5|中級|I3tkHg6SbrM|星:ほし:星星;負ける:まける:輸;夢:ゆめ:夢想|《BLEACH》OP5。主題是不服輸、繼續追夢。
+7948ce1c|Alones|Aqua Timez|2007|アニメ|「BLEACH」OP6|中級|xOF65F9FHqE|一人:ひとり:一個人;強さ:つよさ:堅強;守る:まもる:守護|《BLEACH》OP6。主題是孤獨中的堅強與守護。
+6e0cf259|Life is Like a Boat|Rie fu|2004|アニメ|「BLEACH」ED1|初級|6B67YpRsmtw|舟:ふね:小船;旅:たび:旅程;波:なみ:波浪|《BLEACH》ED1，日英混合、旋律舒緩，適合初學。
+5fbe6642|ほうき星|ユンナ|2005|アニメ|「BLEACH」ED2|中級|2xs_-nl6C3E|星:ほし:星星;空:そら:天空;願い:ねがい:願望|「ほうき星」＝彗星。《BLEACH》ED2。學「願い」與「～ように」祈願用法。
+760ff65c|スカー|キタニタツヤ|2022|アニメ|「BLEACH 千年血戦篇」OP|上級|pb_fwnVamdI|傷:きず:傷;痛み:いたみ:疼痛;戦う:たたかう:戰鬥|《BLEACH 千年血戰篇》OP。歌名 scar＝傷疤。
+533994ca|Pretender|Official髭男dism|2019|J-POP|映画「コンフィデンスマンJP ロマンス編」主題歌|中級|TQ8WlA2GXbk|運命:うんめい:命運;恋人:こいびと:戀人;素敵:すてき:美好|主題是注定無法在一起的戀愛。可學「～たら」「～ならよかった」等假設與惋惜。
+a16a0ed6|宿命|Official髭男dism|2019|J-POP|熱闘甲子園 テーマソング|中級|-kgOFJG881I|宿命:しゅくめい:宿命;夢:ゆめ:夢想;汗:あせ:汗水|甲子園棒球主題曲，青春與拚搏。
+182d6c3b|I LOVE...|Official髭男dism|2020|J-POP|ドラマ「恋はつづくよどこまでも」主題歌|中級|bt8wNQJaKAk|愛:あい:愛;色:いろ:顏色;世界:せかい:世界|主題是遇見愛後世界變了顏色。
+8bef9d11|Subtitle|Official髭男dism|2022|J-POP|ドラマ「silent」主題歌|中級|hN5MBlGv2Ac|言葉:ことば:話語;字幕:じまく:字幕;伝える:つたえる:傳達|日劇《silent》主題曲。主題是用言語傳達心意的困難。
+30524d4f|ミックスナッツ|Official髭男dism|2022|アニメ|「SPY×FAMILY」OP|上級|CbH2F0kXgTY|家族:かぞく:家庭;秘密:ひみつ:秘密;嘘:うそ:謊言|《SPY×FAMILY》OP。比喻像綜合堅果般的「假家庭」。語速快。
+a88325b0|Cry Baby|Official髭男dism|2021|アニメ|「東京リベンジャーズ」OP|上級|O1bhZgkC4Gw|泣く:なく:哭;負ける:まける:輸;立ち上がる:たちあがる:站起來|《東京復仇者》OP。轉調多、難度高。
+6f8ead1f|115万キロのフィルム|Official髭男dism|2018|J-POP||中級|ReCnlwVZj1M|映画:えいが:電影;一生:いっしょう:一生;主演:しゅえん:主演|把兩人的一生比喻成電影。學「～ことにする」。
+d7d77eef|白日|King Gnu|2019|J-POP|ドラマ「イノセンス 冤罪弁護士」主題歌|上級|ony539T074w|罪:つみ:罪;雪:ゆき:雪;白い:しろい:白的|主題是無法挽回的過錯與救贖。
+385e4d92|一途|King Gnu|2021|アニメ|映画「劇場版 呪術廻戦 0」主題歌|上級|hm1na9R2uYA|一途:いちず:專一;愛:あい:愛;守る:まもる:守護|《咒術迴戰 0》主題曲。「一途」＝一心一意。
+c51ba0eb|SPECIALZ|King Gnu|2023|アニメ|「呪術廻戦」渋谷事変 OP|上級|fhzKLBZJC3w|特別:とくべつ:特別;夜:よる:夜晚;街:まち:街道|《咒術迴戰》澀谷事變 OP，日英混合。
+2bae3759|カメレオン|King Gnu|2022|J-POP|ドラマ「ミステリと言う勿れ」主題歌|中級|BOrdMrh4uKg|色:いろ:顏色;変わる:かわる:改變;嘘:うそ:謊言|歌名＝變色龍。主題是為了對方改變自己。
+11f48238|高嶺の花子さん|back number|2013|J-POP||中級|LgLMA1MR7iE|高嶺の花:たかねのはな:高不可攀的人;夏:なつ:夏天;偶然:ぐうぜん:偶然|「高嶺の花」是慣用語，指高不可攀的對象。
+e90e777c|クリスマスソング|back number|2015|J-POP|ドラマ「5→9〜私に恋したお坊さん〜」主題歌|初級|7zBeQezaz4U|冬:ふゆ:冬天;会う:あう:見面;寂しい:さびしい:寂寞|冬季情歌，語速慢，適合學「～たい」「～ば」。
+652b5070|ハッピーエンド|back number|2016|J-POP|映画「ぼくは明日、昨日のきみとデートする」主題歌|初級|hzWDXge2ANM|別れ:わかれ:離別;笑う:わらう:笑;最後:さいご:最後|主題是笑著說再見。學「～ふりをする」（假裝…）。
+2ce700ce|水平線|back number|2020|J-POP||初級|iqEr3P78fz8|水平線:すいへいせん:地平線（海平線）;涙:なみだ:眼淚;遠い:とおい:遙遠|為無法舉辦比賽的高中生而寫。旋律慢，適合跟唱。
+6f1a871f|ヒロイン|back number|2015|J-POP|JR SKISKI CMソング|初級|CsRgs9GBky8|雪:ゆき:雪;冬:ふゆ:冬天;主役:しゅやく:主角|滑雪廣告曲。「ヒロイン」＝女主角。
+fd15d682|残響散歌|Aimer|2021|アニメ|「鬼滅の刃」遊郭編 OP|上級|tLQLa6lM3Us|響く:ひびく:迴響;散る:ちる:散落;歌:うた:歌|《鬼滅之刃》遊郭篇 OP，詞藻華麗、難度高。
+d63df77a|カタオモイ|Aimer|2016|J-POP||初級|kxs9Su_mbpU|片思い:かたおもい:單戀;手:て:手;一緒:いっしょ:一起|其實是兩人相愛卻覺得像單戀般珍惜。旋律舒緩。
+aab95864|蝶々結び|Aimer|2016|J-POP||初級|Du_5wIB26-M|蝶々結び:ちょうちょうむすび:蝴蝶結;結ぶ:むすぶ:綁、結;解ける:ほどける:鬆開|用綁蝴蝶結比喻兩人的關係。
+14c475ca|Ref:rain|Aimer|2018|アニメ|「恋は雨上がりのように」ED|初級|mvkbCZfwWzA|雨:あめ:雨;傘:かさ:傘;恋:こい:戀愛|《戀如雨止》ED。雨天的單戀情歌。
+d5e2d2b3|紅蓮華|LiSA|2019|アニメ|「鬼滅の刃」OP|上級|CwkzK-F0Y00|強い:つよい:強;守る:まもる:守護;花:はな:花|《鬼滅之刃》OP。主題是變強以守護重要的人。
+1edcebc2|炎|LiSA|2020|アニメ|「劇場版 鬼滅の刃 無限列車編」主題歌|中級|4DxL6IKmXx4|炎:ほのお:火焰;別れ:わかれ:離別;約束:やくそく:約定|《無限列車篇》主題曲。主題是離別後繼承意志。
+b3daeaac|crossing field|LiSA|2012|アニメ|「ソードアート・オンライン」OP|上級|KId6eunoiWk|世界:せかい:世界;未来:みらい:未來;つなぐ:つなぐ:連接|《刀劍神域》OP。節奏快、英日混合。
+5bd444b8|明け星|LiSA|2021|アニメ|「鬼滅の刃」遊郭編 主題歌|中級|yGcm81aaTHg|星:ほし:星星;夜明け:よあけ:黎明;光:ひかり:光|「明け星」＝晨星。主題是黑夜後的希望。
+5e31c2b5|青と夏|Mrs. GREEN APPLE|2018|J-POP|映画「青夏 きみに恋した30日」主題歌|中級|m34DPnRUfMU|夏:なつ:夏天;青春:せいしゅん:青春;映画:えいが:電影|夏日青春歌，節奏輕快。
+a3e4d832|ケセラセラ|Mrs. GREEN APPLE|2023|J-POP|ドラマ「日曜の夜ぐらいは...」主題歌|中級|Jy-QS27q7lA|頑張る:がんばる:努力;自分:じぶん:自己;愛する:あいする:愛|「ケセラセラ」＝順其自然。主題是辛苦日子裡愛自己。
+9ef08571|ライラック|Mrs. GREEN APPLE|2024|アニメ|「忘却バッテリー」OP|上級|QjrkrVmC-8M|春:はる:春天;過去:かこ:過去;青春:せいしゅん:青春|《忘卻電池》OP。速度快、高音多。
+70111f33|インフェルノ|Mrs. GREEN APPLE|2019|アニメ|「炎炎ノ消防隊」OP|上級|wfCcs0vLysk|炎:ほのお:火焰;命:いのち:生命;燃える:もえる:燃燒|《炎炎消防隊》OP。歌名＝地獄之火。
+41f3c071|Soranji|Mrs. GREEN APPLE|2022|J-POP|映画「ラーゲリより愛を込めて」主題歌|初級|44cICMd3jW4|命:いのち:生命;生きる:いきる:活下去;願う:ねがう:祈願|電影主題曲，主題是祈願對方活下去。旋律緩慢。
+372a1dca|点描の唄|Mrs. GREEN APPLE|2018|J-POP|映画「青夏 きみに恋した30日」挿入歌|初級|9UQQwRcHHQY|夏:なつ:夏天;花火:はなび:煙火;最後:さいご:最後|兩人對唱的夏日情歌。「点描」是點描畫法。
+b1592567|前前前世|RADWIMPS|2016|アニメ|映画「君の名は。」主題歌|上級|PDSkFeMVNFs|前世:ぜんせ:前世;探す:さがす:尋找;君:きみ:你|《你的名字》主題曲，語速快。學「～から」「ずっと」。
+e649d5aa|スパークル|RADWIMPS|2016|アニメ|映画「君の名は。」挿入歌|中級|a2GujJZfXpg|運命:うんめい:命運;時間:じかん:時間;奇跡:きせき:奇蹟|《你的名字》插曲，長篇敘事。
+37fdff0e|なんでもないや|RADWIMPS|2016|アニメ|映画「君の名は。」主題歌|初級|n89SKAymNfA|時間:じかん:時間;涙:なみだ:眼淚;大丈夫:だいじょうぶ:沒事|「なんでもないや」＝沒什麼啦。旋律舒緩。
+6a7f9fae|すずめ|RADWIMPS|2022|アニメ|映画「すずめの戸締まり」主題歌|初級|Xs0Lxif1u9E|扉:とびら:門;旅:たび:旅程;行く:いく:去|《鈴芽之旅》主題曲，句子短、重複多。
+e1bab24f|愛にできることはまだあるかい|RADWIMPS|2019|アニメ|映画「天気の子」主題歌|中級|EQ94zflNqn4|愛:あい:愛;運命:うんめい:命運;空:そら:天空|《天氣之子》主題曲。學「～ことはあるか」的疑問句型。
+56222b14|グランドエスケープ|RADWIMPS|2019|アニメ|映画「天気の子」挿入歌|中級|epQGR34yiTY|空:そら:天空;逃げる:にげる:逃離;重力:じゅうりょく:重力|《天氣之子》插曲，合唱感強。
+7ae14715|マリーゴールド|あいみょん|2018|J-POP||中級|0xSiBpUdW4E|花:はな:花;夏:なつ:夏天;手:て:手|マリーゴールド＝萬壽菊。夏日情歌，語速中等。
+3818244d|裸の心|あいみょん|2020|J-POP|ドラマ「私の家政夫ナギサさん」主題歌|初級|yOAwvRmVIyo|心:こころ:心;恋:こい:戀愛;伝える:つたえる:傳達|主題是坦白真心。旋律慢，適合跟唱。
+90769f84|君はロックを聴かない|あいみょん|2017|J-POP||中級|ARwVe1MYAUA|音楽:おんがく:音樂;聴く:きく:聽;好き:すき:喜歡|主題是想用喜歡的音樂吸引對方。學「聴く」與「聞く」的差別。
+93fc4e3f|愛を伝えたいだとか|あいみょん|2017|J-POP||中級|9qRCARM_LfE|愛:あい:愛;伝える:つたえる:傳達;部屋:へや:房間|節奏放鬆。學「～だとか」（之類的）口語。
+b3441dbe|ハルノヒ|あいみょん|2019|アニメ|映画「クレヨンしんちゃん 新婚旅行ハリケーン」主題歌|初級|pfGI91CFtRg|春:はる:春天;家族:かぞく:家人;日:ひ:日子|《蠟筆小新》電影主題曲，主題是平凡的家庭日常。
+aab8e3ae|怪獣の花唄|Vaundy|2020|J-POP||中級|UM9XNpgrqVk|怪獣:かいじゅう:怪獸;歌:うた:歌;思い出す:おもいだす:想起|主題是想起從前唱歌的日子。
+7d2f23b6|踊り子|Vaundy|2021|J-POP||中級|7HgJIAUtICU|踊り子:おどりこ:舞者;回る:まわる:旋轉;夜:よる:夜晚|節奏輕鬆、反覆多。
+c4c7e76a|不可幸力|Vaundy|2019|J-POP||上級|Gbz2C2gQREI|幸せ:しあわせ:幸福;力:ちから:力量;運命:うんめい:命運|歌名是「不可抗力」的諧音雙關。
+3848de9d|東京フラッシュ|Vaundy|2019|J-POP||中級|SIuF37EWaLU|東京:とうきょう:東京;街:まち:街道;光:ひかり:光|東京夜景的都會情歌。
+bc232c5d|裸の勇者|Vaundy|2022|アニメ|「王様ランキング」OP|上級|FT0GKCuSaW0|勇者:ゆうしゃ:勇者;夢:ゆめ:夢想;強さ:つよさ:堅強|《國王排名》OP。主題是不完美的勇者。
+388071a3|残酷な天使のテーゼ|高橋洋子|1995|アニメ|「新世紀エヴァンゲリオン」OP|中級|Ca0-ZccWruA|天使:てんし:天使;神話:しんわ:神話;少年:しょうねん:少年|《新世紀福音戰士》OP，KTV 定番。
+6647a74f|紅蓮の弓矢|Linked Horizon|2013|アニメ|「進撃の巨人」OP|上級|2B6nj38AdD0|自由:じゆう:自由;壁:かべ:牆;戦う:たたかう:戰鬥|《進擊的巨人》OP，含德語、氣勢磅礡。
+ace4969c|ブルーバード|いきものがかり|2008|アニメ|「NARUTO -ナルト- 疾風伝」OP|中級|KpsJWFuVTdI|空:そら:天空;鳥:とり:鳥;飛ぶ:とぶ:飛|《火影忍者疾風傳》OP。主題是像鳥一樣飛向天空。
+eabb8afe|シルエット|KANA-BOON|2014|アニメ|「NARUTO -ナルト- 疾風伝」OP|上級|ZFoJYI7Q4iA|影:かげ:影子;大人:おとな:大人;忘れる:わすれる:忘記|《火影忍者疾風傳》OP，語速快。
+4cc5f50e|GO!!!|FLOW|2004|アニメ|「NARUTO -ナルト-」OP|上級|AE4b9jO1uB4|夢:ゆめ:夢想;仲間:なかま:夥伴;走る:はしる:奔跑|《火影忍者》OP，熱血搖滾。
+3d5a2c5a|ウィーアー！|きただにひろし|1999|アニメ|「ONE PIECE」OP|中級|r7n-L5B0bBw|宝:たから:寶藏;冒険:ぼうけん:冒險;仲間:なかま:夥伴|《航海王》第一首 OP。主題是尋寶冒險。
+b730d311|君の知らない物語|supercell|2009|アニメ|「化物語」ED|中級|jpV5jeFlt_E|星:ほし:星星;夏:なつ:夏天;物語:ものがたり:故事|《化物語》ED，夏夜看星星的回憶。
+b711c164|only my railgun|fripSide|2009|アニメ|「とある科学の超電磁砲」OP|上級|ZhIxg6_Femo|電気:でんき:電;光:ひかり:光;未来:みらい:未來|《科學超電磁砲》OP，電音快歌。
+3f09f0b0|unravel|TK from 凛として時雨|2014|アニメ|「東京喰種トーキョーグール」OP|上級|Fve_lHIPa-I|壊れる:こわれる:壞掉;自分:じぶん:自己;世界:せかい:世界|《東京喰種》OP，高音與爆發力強，難度高。
+85ae38c1|廻廻奇譚|Eve|2020|アニメ|「呪術廻戦」OP|上級|1tk1pqwrOys|呪い:のろい:詛咒;回る:まわる:轉;物語:ものがたり:故事|《咒術迴戰》OP，詞密度高、語速快。
+d30db05e|青のすみか|キタニタツヤ|2023|アニメ|「呪術廻戦」懐玉・玉折 OP|上級|zuoVd2QNxJo|夏:なつ:夏天;青:あお:藍色;友達:ともだち:朋友|《咒術迴戰》懷玉・玉折 OP，青春友情。
+8aede459|Bling-Bang-Bang-Born|Creepy Nuts|2024|アニメ|「マッシュル-MASHLE-」神覚者候補選抜試験編 OP|上級|mLW35YMzELE|魔法:まほう:魔法;最強:さいきょう:最強;踊る:おどる:跳舞|《肌肉魔法使》OP，饒舌極快，挑戰級。
+a1f81c02|ドラえもん|星野源|2018|アニメ|映画「ドラえもん のび太の宝島」主題歌|初級|ypRTzt1KrF8|夢:ゆめ:夢想;未来:みらい:未來;少年:しょうねん:少年|哆啦A夢電影主題曲，用字簡單。
+2aa9e8bd|恋|星野源|2016|J-POP|ドラマ「逃げるは恥だが役に立つ」主題歌|中級|jhOVibLEDhA|恋:こい:戀愛;夫婦:ふうふ:夫妻;普通:ふつう:普通|《月薪嬌妻》主題曲，「恋ダンス」很有名。
+54c1e4f3|天体観測|BUMP OF CHICKEN|2001|ロック||中級|j7CDb610Bg0|星:ほし:星星;望遠鏡:ぼうえんきょう:望遠鏡;夜:よる:夜晚|主題是深夜看星星的青春回憶。
+edd730d9|カルマ|BUMP OF CHICKEN|2005|ロック|ゲーム「テイルズ オブ ジ アビス」主題歌|中級|mTdcxQZcQAE|鏡:かがみ:鏡子;命:いのち:生命;存在:そんざい:存在|遊戲主題曲。歌名＝業（因果）。
+50bbd30e|First Love|宇多田ヒカル|1999|昭和・平成名曲||初級|o1sUaVJUeB0|最後:さいご:最後;キス:キス:吻;思い出:おもいで:回憶|初戀回憶的經典，語速慢。
+f852712a|Automatic|宇多田ヒカル|1998|昭和・平成名曲||中級|-9DxpPiE458|電話:でんわ:電話;声:こえ:聲音;自動:じどう:自動|宇多田出道曲，R&B 節奏。
+bf3f212b|花束を君に|宇多田ヒカル|2016|J-POP|連続テレビ小説「とと姉ちゃん」主題歌|初級|yCZFof7Y0tQ|花束:はなたば:花束;涙:なみだ:眼淚;言葉:ことば:話語|晨間劇主題曲，主題是獻給逝去之人的花束。
+e3d8b25f|世界に一つだけの花|SMAP|2003|昭和・平成名曲||初級|j0LMh8ZOwoQ|花:はな:花;一つ:ひとつ:一個;特別:とくべつ:特別|主題是每個人都是獨一無二的花。用字簡單，適合初學。
+3e676be3|夜空ノムコウ|SMAP|1998|昭和・平成名曲||初級||夜空:よぞら:夜空;未来:みらい:未來;大人:おとな:大人|主題是長大後回望夜空。旋律慢。
+e462596a|涙そうそう|夏川りみ|2001|昭和・平成名曲||初級|5TR1wJCimyk|涙:なみだ:眼淚;思い出:おもいで:回憶;会う:あう:見面|沖繩名曲。「そうそう」是沖繩話「不停流淚」。
+6ecfe5a6|島唄|THE BOOM|1992|昭和・平成名曲||初級|qyOglsmaLJI|島:しま:島;風:かぜ:風;海:うみ:海|沖繩風格名曲，主題是對和平的祈願。
+79888564|栄光の架橋|ゆず|2004|昭和・平成名曲|NHK アテネオリンピック テーマソング|初級|PRJoAPH0ZGo|栄光:えいこう:榮光;架橋:かきょう:架橋;涙:なみだ:眼淚|奧運主題曲，主題是越過苦難走向光榮。
+3c1ffadb|桜坂|福山雅治|2000|昭和・平成名曲||初級|AGYJ6jeu3p8|桜:さくら:櫻花;坂:さか:坡道;春:はる:春天|櫻花坡道上的離別情歌。
+8647539b|TSUNAMI|サザンオールスターズ|2000|昭和・平成名曲||中級|xRyL5BPOWfE|思い出:おもいで:回憶;涙:なみだ:眼淚;夢:ゆめ:夢|南方之星代表作，主題是像海嘯般的思念。
+df41f41f|いとしのエリー|サザンオールスターズ|1979|昭和・平成名曲||初級|htMGeeLObNM|愛しい:いとしい:可愛、心愛;笑顔:えがお:笑臉;涙:なみだ:眼淚|南方之星初期名曲，抒情慢歌。
+4ac1386d|未来予想図II|DREAMS COME TRUE|1989|昭和・平成名曲||初級|jysWZ3eW3AA|未来:みらい:未來;予想:よそう:預想;約束:やくそく:約定|主題是兩人一起描繪的未來。
+194b2fc9|LOVE LOVE LOVE|DREAMS COME TRUE|1995|昭和・平成名曲|ドラマ「愛していると言ってくれ」主題歌|初級|kEPznDgVv8w|愛:あい:愛;会う:あう:見面;願い:ねがい:願望|日劇主題曲，句子簡短重複。
+9695f6ee|糸|中島みゆき|1992|昭和・平成名曲||初級|hDisMIGEP1U|糸:いと:線;布:ぬの:布;出会う:であう:相遇|用縱線與橫線比喻人與人的緣分。中島みゆき代表作。
+4953f85c|時代|中島みゆき|1975|昭和・平成名曲||初級|Ry_bpaKDcAo|時代:じだい:時代;別れ:わかれ:離別;生まれる:うまれる:出生|主題是時代會轉變、悲傷也會過去。
+1a33c425|川の流れのように|美空ひばり|1989|昭和・平成名曲||初級|tr9V1V2eyfY|川:かわ:河;流れ:ながれ:流動;人生:じんせい:人生|美空ひばり最後的單曲，把人生比喻成河流。學「～ように」。
+fc6675c8|上を向いて歩こう|坂本九|1961|昭和・平成名曲||初級|F284iB65-QU|上:うえ:上面;涙:なみだ:眼淚;歩く:あるく:走路|世界知名的「壽喜燒」。學意志形「歩こう」與「～ように」。
+6b7f770d|赤いスイートピー|松田聖子|1982|昭和・平成名曲||初級|1GnufXctwjU|花:はな:花;春:はる:春天;赤い:あかい:紅的|80 年代偶像經典，語速慢、發音清楚。
+78b4bbe8|春よ、来い|松任谷由実|1994|昭和・平成名曲|連続テレビ小説「春よ、来い」主題歌|初級|qX7pFYH9O04|春:はる:春天;花:はな:花;来る:くる:來|晨間劇主題曲。學命令形「来い」（來吧）。
+9e77b07b|やさしさに包まれたなら|荒井由実|1974|昭和・平成名曲||初級|LfQ0MVIYFnM|優しさ:やさしさ:溫柔;包む:つつむ:包覆;子供:こども:孩子|《魔女宅急便》片尾曲。學「～なら」與被動「包まれる」。
+59bf63b6|さくら（独唱）|森山直太朗|2003|昭和・平成名曲||初級|p_2F2lKV9uA|桜:さくら:櫻花;友:とも:朋友;別れ:わかれ:離別|畢業季代表歌。旋律慢，適合跟唱。
+3287a77f|3月9日|レミオロメン|2004|昭和・平成名曲||初級|UNRJyBHziX4|三月:さんがつ:三月;日:ひ:日子;未来:みらい:未來|畢業與祝福的歌，日期讀法「さんがつここのか」。
+1e1eb106|粉雪|レミオロメン|2005|昭和・平成名曲|ドラマ「1リットルの涙」挿入歌|中級|1wxTksLZ1Mw|雪:ゆき:雪;心:こころ:心;冬:ふゆ:冬天|冬季情歌，「粉雪」＝細雪。
+5adc31c8|小さな恋のうた|MONGOL800|2001|ロック||中級|JoJ6lnF07U4|恋:こい:戀愛;小さな:ちいさな:小小的;声:こえ:聲音|沖繩樂團的青春情歌，KTV 定番。
+8013f326|チェリー|スピッツ|1996|ロック||初級|Eze6-eHmtJg|桜:さくら:櫻花;春:はる:春天;忘れる:わすれる:忘記|スピッツ代表作，用字簡單。
+1bd483af|ロビンソン|スピッツ|1995|ロック||初級|51CH3dPaWXc|空:そら:天空;街:まち:街道;二人:ふたり:兩人|スピッツ代表作，意境朦朧。
+aba42cd5|空も飛べるはず|スピッツ|1994|ロック||初級|h-kQw4JqCHE|空:そら:天空;飛ぶ:とぶ:飛;夢:ゆめ:夢想|學「～はず」（應該）的經典例子。
+59331299|innocent world|Mr.Children|1994|ロック||中級|rfVhsgCqG0I|世界:せかい:世界;夢:ゆめ:夢想;旅:たび:旅程|Mr.Children 代表作。
+ea8a5d5f|HANABI|Mr.Children|2008|ロック|ドラマ「コード・ブルー」主題歌|中級|EXxaBXKjl6Q|花火:はなび:煙火;夏:なつ:夏天;もう一度:もういちど:再一次|日劇《Code Blue》主題曲。
+e8ce5938|ありがとう|いきものがかり|2010|J-POP|連続テレビ小説「ゲゲゲの女房」主題歌|初級|VZBU8LvZ91Q|感謝:かんしゃ:感謝;笑顔:えがお:笑臉;一緒:いっしょ:一起|晨間劇主題曲，主題是對伴侶的感謝。
+eab57704|YELL|いきものがかり|2009|J-POP|NHK全国学校音楽コンクール課題曲|初級|lz8frtP6_kk|応援:おうえん:加油;友達:ともだち:朋友;夢:ゆめ:夢想|合唱比賽課題曲，主題是給自己與朋友的打氣。
+814ce134|丸の内サディスティック|椎名林檎|1999|ロック||上級|4tlUwgtgdZA|東京:とうきょう:東京;音楽:おんがく:音樂;電車:でんしゃ:電車|爵士風格名曲，詞句艱深。
+0a7259dc|Mela!|緑黄色社会|2020|J-POP||中級|aRDURmIYBZ4|声:こえ:聲音;歌う:うたう:唱;明日:あした:明天|元氣歌曲。「Mela」＝義大利語「蘋果」。
+d94ed303|猫|DISH//|2017|J-POP||初級|es-TULCdfvQ|猫:ねこ:貓;別れ:わかれ:離別;会う:あう:見面|あいみょん作詞作曲。主題是想變成貓去見離開的人。
+92fd4262|ドライフラワー|優里|2020|J-POP||初級|kzZ6KXDM1RI|花:はな:花;乾く:かわく:乾;忘れる:わすれる:忘記|主題是分手後的回憶像乾燥花。
+f2a957bc|ベテルギウス|優里|2021|J-POP|ドラマ「SUPER RICH」主題歌|初級|cbqvxDTLMps|星:ほし:星星;光:ひかり:光;遠い:とおい:遙遠|參宿四（ベテルギウス）為題的情歌。
+875af698|香水|瑛人|2019|J-POP||初級|9MjAJSoaoSo|香り:かおり:香味;別れ:わかれ:離別;思い出す:おもいだす:想起|主題是聞到香水就想起前任。
+9051c923|新宝島|サカナクション|2015|ロック|映画「バクマン。」主題歌|中級|LIlZCmETvsY|宝:たから:寶藏;島:しま:島;次:つぎ:下一個|《爆漫王》電影主題曲，節奏洗腦。
+e45f300d|アイノカタチ|MISIA|2018|J-POP|ドラマ「義母と娘のブルース」主題歌|初級|1lD3RSit348|愛:あい:愛;形:かたち:形狀;家族:かぞく:家人|主題是愛的形狀。旋律慢。
+e3e03175|Everything|MISIA|2000|昭和・平成名曲|ドラマ「やまとなでしこ」主題歌|初級|aHIR33pOUv0|愛:あい:愛;運命:うんめい:命運;夜:よる:夜晚|MISIA 代表抒情曲。
+0f0b9416|secret base ～君がくれたもの～|ZONE|2001|昭和・平成名曲||初級|fRQtDjiRtI8|夏:なつ:夏天;秘密:ひみつ:秘密;別れ:わかれ:離別|夏天的友情與離別，畢業季常聽。
+e2370e44|女々しくて|ゴールデンボンバー|2009|J-POP||中級|BC9P3DSZu0A|女々しい:めめしい:懦弱、不乾脆;忘れる:わすれる:忘記;辛い:つらい:痛苦|搞笑視覺系名曲，反覆多、好記。
+2648d743|Story|AI|2005|J-POP||初級|nMROhyihehU|一人:ひとり:一個人;守る:まもる:守護;笑顔:えがお:笑臉|主題是「你不是一個人」。
+2ae30938|366日|HY|2008|J-POP||初級|glsH4Mgxz-g|恋:こい:戀愛;一年:いちねん:一年;忘れる:わすれる:忘記|主題是忘不了的戀情。366 天＝閏年的一整年。
+69b74229|奏（かなで）|スキマスイッチ|2004|J-POP||初級|J5Z7tIq7bco|駅:えき:車站;改札:かいさつ:剪票口;別れ:わかれ:離別|車站剪票口的離別場景。
+70393a0b|全力少年|スキマスイッチ|2005|J-POP||中級|IvDTkTKi5pA|全力:ぜんりょく:全力;少年:しょうねん:少年;走る:はしる:奔跑|主題是像少年般全力以赴。
+53b6779a|愛唄|GReeeeN|2007|J-POP||中級|EvwRYGlJWfQ|愛:あい:愛;歌:うた:歌;一緒:いっしょ:一起|GReeeeN 代表情歌。
+c4d7ff6c|キセキ|GReeeeN|2008|J-POP|ドラマ「ROOKIES」主題歌|中級|DwTinTO0o9I|奇跡:きせき:奇蹟;軌跡:きせき:軌跡;出会う:であう:相遇|「キセキ」雙關「奇蹟」與「軌跡」。日劇《ROOKIES》主題曲。
+906aa3d9|ハナミズキ|一青窈|2004|J-POP||初級|Lv9pOboKtjg|花:はな:花;百年:ひゃくねん:一百年;願う:ねがう:祈願|ハナミズキ＝大花四照花。主題是祈願對方幸福。
+7f8cb56e|雪の華|中島美嘉|2003|J-POP||初級|mF5Qq2YheTg|雪:ゆき:雪;華:はな:花;冬:ふゆ:冬天|冬季經典情歌。「雪の華」＝雪花。
+4cd247ad|千本桜|黒うさP feat. 初音ミク|2011|ボカロ||上級|shs0rAiwsGQ|桜:さくら:櫻花;千本:せんぼん:一千棵;夜:よる:夜晚|VOCALOID 名曲，大正浪漫風、詞句古典。
+954cbab6|晩餐歌|tuki.|2023|J-POP||初級|oZpYEEcvu5I|晩餐:ばんさん:晚餐;歌:うた:歌;愛:あい:愛|高中生創作歌手的抒情曲。
+eed8361e|可愛くてごめん|HoneyWorks|2022|ボカロ||上級|K4xLi8IF1FM|可愛い:かわいい:可愛;ごめん:ごめん:抱歉;嫉妬:しっと:嫉妒|HoneyWorks 歌曲，口語、語速快。`;
+/* ============ 歌曲庫 ============ */
+type SongV = { w: string; r: string; m: string };
+type Song2 = { id: string; t: string; a: string; y: number; g: string; tie: string; lv: string; yt: string; v: SongV[]; note: string; i: number };
+const SONGS2: Song2[] = SONGS2_RAW.split("\n").map((l: string, i: number): Song2 => {
+  const [id, t, a, y, g, tie, lv, yt, v, note] = l.split("|") as [string, string, string, string, string, string, string, string, string, string];
+  return { id, t, a, y: Number(y), g, tie, lv, yt, note, i, v: v.split(";").filter(Boolean).map((e: string): SongV => { const [w, r, m] = e.split(":") as [string, string, string]; return { w, r, m }; }) };
+});
+const GENRES = ["J-POP", "アニメ", "ロック", "シティポップ", "昭和・平成名曲", "ボカロ"];
+const ARTISTS = [...new Set(SONGS2.map((s: Song2) => s.a))].sort((a: string, b: string) => SONGS2.filter((x: Song2) => x.a === b).length - SONGS2.filter((x: Song2) => x.a === a).length || a.localeCompare(b, "ja"));
+/* ---- 斷詞（kuromoji，第一次使用時載入，之後由 service worker 快取） ---- */
+type Tok = { surface_form: string; pos: string; pos_detail_1: string; basic_form: string; reading?: string };
+type Tokenizer = { tokenize: (s: string) => Tok[] };
+let TK_PROMISE: Promise<Tokenizer> | null = null;
+function loadTokenizer(): Promise<Tokenizer> {
+  if (TK_PROMISE) return TK_PROMISE;
+  TK_PROMISE = new Promise<Tokenizer>((resolve, reject) => {
+    const w = window as unknown as { kuromoji?: { builder: (o: { dicPath: string }) => { build: (cb: (e: unknown, t: Tokenizer) => void) => void } } };
+    const go = () => {
+      if (!w.kuromoji) { reject(new Error("no kuromoji")); return; }
+      w.kuromoji.builder({ dicPath: "dict/" }).build((e: unknown, t: Tokenizer) => (e ? reject(e) : resolve(t)));
+    };
+    if (w.kuromoji) { go(); return; }
+    const s = document.createElement("script");
+    s.src = "kuromoji.js";
+    s.onload = go;
+    s.onerror = () => reject(new Error("load fail"));
+    document.head.appendChild(s);
+  }).catch((e: unknown) => { TK_PROMISE = null; throw e; });
+  return TK_PROMISE;
+}
+function useTokenizer(on: boolean): { tk: Tokenizer | null; st: "idle" | "load" | "ok" | "err" } {
+  const [tk, setTk] = useState<Tokenizer | null>(null);
+  const [st, setSt] = useState<"idle" | "load" | "ok" | "err">("idle");
+  useEffect(() => {
+    if (!on || tk) return;
+    let alive = true;
+    setSt("load");
+    loadTokenizer().then((t: Tokenizer) => { if (alive) { setTk(t); setSt("ok"); } }).catch(() => { if (alive) setSt("err"); });
+    return () => { alive = false; };
+  }, [on]);
+  return { tk, st };
+}
+const KJ = /[\u3400-\u9fff々〆ヶ]/;
+function rubyParts(surface: string, readingKata: string | undefined): [string, string | null][] {
+  if (!readingKata || readingKata === "*" || !KJ.test(surface)) return [[surface, null]];
+  const r = toHiraS(readingKata);
+  const parts = surface.match(/[\u3400-\u9fff々〆ヶ]+|[^\u3400-\u9fff々〆ヶ]+/g) ?? [surface];
+  let re = "^";
+  parts.forEach((p: string) => { re += KJ.test(p[0] ?? "") ? "(.+?)" : toHiraS(p).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
+  re += "$";
+  const m = r.match(new RegExp(re));
+  if (!m) return [[surface, r]];
+  let k = 1;
+  return parts.map((p: string): [string, string | null] => (KJ.test(p[0] ?? "") ? [p, m[k++] ?? null] : [p, null]));
+}
+function FuriLine(props: { toks: Tok[] | null; text: string; furi: boolean; hl?: string }) {
+  const t = useGrokTheme();
+  if (!props.toks) return <span>{props.text}</span>;
+  return (
+    <span>
+      {props.toks.map((tk: Tok, i: number) => {
+        const mark = props.hl && tk.surface_form === props.hl;
+        const inner = rubyParts(tk.surface_form, tk.reading).map(([s, r]: [string, string | null], j: number) =>
+          r && props.furi ? (
+            <ruby key={j}>
+              {s}
+              <rt style={{ fontSize: "0.5em", fontWeight: 400 }}>{r}</rt>
+            </ruby>
+          ) : (
+            <span key={j}>{s}</span>
+          )
+        );
+        return mark ? <mark key={i} style={{ background: t.fill.warningSubtle, color: t.text.primary }}>{inner}</mark> : <span key={i}>{inner}</span>;
+      })}
+    </span>
+  );
+}
+const READ_FIX: Record<string, string> = { 一人: "ヒトリ", 二人: "フタリ", 一つ: "ヒトツ", 二つ: "フタツ", 三つ: "ミッツ", 四つ: "ヨッツ", 五つ: "イツツ", 一日: "イチニチ", 二日: "フツカ", 三日: "ミッカ", 大人: "オトナ", 一人きり: "ヒトリキリ", 一人ぼっち: "ヒトリボッチ", 何度: "ナンド", 永遠: "エイエン", 未来: "ミライ" };
+function fixToks(ts: Tok[]): Tok[] {
+  const out: Tok[] = [];
+  for (let i = 0; i < ts.length; i++) {
+    const a = ts[i]!;
+    const n = ts[i + 1];
+    if (a.pos_detail_1 === "数" && n && (n.pos_detail_1 === "接尾" || n.surface_form === "つ") && READ_FIX[a.surface_form + n.surface_form]) {
+      const sf = a.surface_form + n.surface_form;
+      out.push({ ...a, surface_form: sf, basic_form: sf, reading: READ_FIX[sf], pos_detail_1: "一般" });
+      i++;
+      continue;
+    }
+    const f = READ_FIX[a.surface_form];
+    out.push(f ? { ...a, reading: f } : a);
+  }
+  return out;
+}
+function lyricLines(s: string): string[] {
+  return s.split(/\r?\n/).map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+}
+function isContent(tk: Tok): boolean {
+  if (!["名詞", "動詞", "形容詞", "副詞"].includes(tk.pos)) return false;
+  if (["非自立", "数", "代名詞", "接尾", "固有名詞"].includes(tk.pos_detail_1)) return false;
+  if (!/[\u3040-\u30ff\u3400-\u9fff]/.test(tk.surface_form)) return false;
+  return KJ.test(tk.surface_form) || tk.surface_form.length >= 2;
+}
+function lyricsSearchUrl(s: Song2, site: "g" | "u"): string {
+  return site === "u" ? `https://www.uta-net.com/search/?Keyword=${encodeURIComponent(s.t)}&Aselect=2&Bselect=3` : `https://www.google.com/search?q=${encodeURIComponent(`${s.t} ${s.a} 歌詞`)}`;
+}
+function openExt(url: string): void {
+  try { window.open(url, "_blank", "noopener"); } catch { /* 無法開啟 */ }
+}
+function lvColor(t: T, lv: string): string {
+  return lv === "初級" ? t.text.success : lv === "中級" ? t.text.warning : t.text.danger;
+}
+function SongCard(props: { s: Song2; onOpen: () => void }) {
+  const t = useGrokTheme();
+  const db = useDB();
+  const s = props.s;
+  const [imgOk, setImgOk] = useState(true);
+  const fav = !!db.fav[s.id];
+  const hasLyr = !!db.lyr[s.id];
+  return (
+    <div style={{ position: "relative", borderRadius: 12, border: `1px solid ${t.border.subtle}`, background: t.bg.elevated, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <button type="button" onClick={props.onOpen} aria-label={`${s.t}／${s.a}`} style={{ font: "inherit", textAlign: "left", cursor: "pointer", border: "none", background: "transparent", color: t.text.primary, padding: 0, display: "flex", flexDirection: "column", flex: 1 }}>
+        <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", background: `linear-gradient(135deg, ${t.fill.accentSubtle}, ${t.bg.subtle})`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+          <span lang="ja" style={{ fontFamily: JA_FONT, fontSize: 28, fontWeight: 700, color: t.text.secondary }}>{[...s.t][0]}</span>
+          {s.yt && imgOk ? <img src={`https://i.ytimg.com/vi/${s.yt}/mqdefault.jpg`} alt="" loading="lazy" onError={() => setImgOk(false)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} /> : null}
+          {hasLyr ? <span style={{ position: "absolute", left: 6, bottom: 6, fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: t.fill.successSubtle, color: t.text.primary, border: `1px solid ${t.text.success}` }}>📄 已存歌詞</span> : null}
+        </div>
+        <div style={{ padding: "8px 10px 10px", display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 4 }}>
+          <div lang="ja" style={{ fontFamily: JA_FONT, fontWeight: 700, fontSize: 15, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{s.t}</div>
+          <div lang="ja" style={{ fontFamily: JA_FONT, fontSize: 13, color: t.text.secondary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.a}・{s.y}</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", fontSize: 11 }}>
+            <span style={{ padding: "1px 7px", borderRadius: 999, background: t.bg.subtle, color: t.text.secondary }}>{s.g}</span>
+            <span style={{ padding: "1px 7px", borderRadius: 999, border: `1px solid ${lvColor(t, s.lv)}`, color: t.text.primary }}>{s.lv}</span>
+          </div>
+        </div>
+      </button>
+      <button type="button" aria-label={fav ? `取消收藏 ${s.t}` : `收藏 ${s.t}`} aria-pressed={fav} onClick={() => { DB.fav = { ...DB.fav }; if (fav) delete DB.fav[s.id]; else DB.fav[s.id] = Date.now(); commit(); }} style={{ position: "absolute", top: 6, right: 6, width: 40, height: 40, borderRadius: 999, border: "none", cursor: "pointer", background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {fav ? "♥" : "♡"}
+      </button>
+    </div>
+  );
+}
+function SongLibrary() {
+  const t = useGrokTheme();
+  const db = useDB();
+  const [q, setQ] = useState("");
+  const [genre, setGenre] = useState("all");
+  const [artist, setArtist] = useState("all");
+  const [lv, setLv] = useState("all");
+  const [only, setOnly] = useState("all");
+  const [sort, setSort] = useState("pop");
+  const [sel, setSel] = useState<string | null>(null);
+  const [lim, setLim] = useState(40);
+  const list = SONGS2.filter((s: Song2) => {
+    if (genre !== "all" && s.g !== genre) return false;
+    if (artist !== "all" && s.a !== artist) return false;
+    if (lv !== "all" && s.lv !== lv) return false;
+    if (only === "fav" && !db.fav[s.id]) return false;
+    if (only === "lyr" && !db.lyr[s.id]) return false;
+    if (q) { const k = q.toLowerCase(); if (![s.t, s.a, s.tie, s.note, ...s.v.map((v: SongV) => v.w + v.r + v.m)].some((x: string) => x.toLowerCase().includes(k))) return false; }
+    return true;
+  }).sort((a: Song2, b: Song2) => (sort === "new" ? b.y - a.y : sort === "old" ? a.y - b.y : a.i - b.i));
+  const cur = sel ? SONGS2.find((s: Song2) => s.id === sel) : undefined;
+  useEffect(() => { window.scrollTo(0, 0); }, [sel]);
+  if (cur) return <SongDetail s={cur} onBack={() => setSel(null)} />;
+  const selStyle: CSSProperties = { font: "inherit", fontSize: 15, minHeight: 44, padding: "0 10px", borderRadius: 10, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary, flex: 1, minWidth: 0 };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
+      <Card>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+          <input type="search" value={q} onChange={(e: ChangeEvent<HTMLInputElement>) => { setQ(e.target.value); setLim(40); }} placeholder="搜尋歌名、歌手、動畫、單字…" aria-label="搜尋歌曲" style={{ width: "100%", boxSizing: "border-box", font: "inherit", fontSize: 16, minHeight: 44, padding: "8px 12px", borderRadius: 10, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary }} />
+          <Chips small scroll value={genre} onChange={(v: string) => { setGenre(v); setLim(40); }} options={[["all", `全部 ${SONGS2.length}`], ...GENRES.map((g: string): [string, string] => [g, `${g} ${SONGS2.filter((s: Song2) => s.g === g).length}`])]} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <select aria-label="依歌手篩選" value={artist} onChange={(e: ChangeEvent<HTMLSelectElement>) => { setArtist(e.target.value); setLim(40); }} style={selStyle}>
+              <option value="all">全部歌手（{ARTISTS.length}）</option>
+              {ARTISTS.map((a: string) => <option key={a} value={a}>{a}（{SONGS2.filter((s: Song2) => s.a === a).length}）</option>)}
+            </select>
+            <select aria-label="排序" value={sort} onChange={(e: ChangeEvent<HTMLSelectElement>) => setSort(e.target.value)} style={{ ...selStyle, flex: "0 0 auto" }}>
+              <option value="pop">推薦順序</option>
+              <option value="new">最新</option>
+              <option value="old">最早</option>
+            </select>
+          </div>
+          <Chips small scroll value={lv} onChange={(v: string) => setLv(v)} options={[["all", "全部難度"], ["初級", "🟢 初級（慢歌）"], ["中級", "🟡 中級"], ["上級", "🔴 上級（快歌）"]]} />
+          <Chips small scroll value={only} onChange={(v: string) => setOnly(v)} options={[["all", "全部"], ["fav", `♥ 收藏 ${Object.keys(db.fav).length}`], ["lyr", `📄 已存歌詞 ${Object.keys(db.lyr).length}`]]} />
+        </div>
+      </Card>
+      <div style={{ fontSize: 13, color: t.text.secondary }}>共 {list.length} 首{list.length === 0 ? "，換個條件試試。" : ""}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(158px, 1fr))", gap: 10 }}>
+        {list.slice(0, lim).map((s: Song2) => <SongCard key={s.id} s={s} onOpen={() => setSel(s.id)} />)}
+      </div>
+      {list.length > lim ? <Btn label={`顯示更多（還有 ${list.length - lim} 首）`} onClick={() => setLim(lim + 60)} /> : null}
+      <Note>歌曲資訊（歌名、歌手、年份）已用 iTunes 資料核對；影片為 YouTube 官方或唱片公司頻道。歌詞受著作權保護，不收錄在 App 裡：請在歌曲頁按「搜尋歌詞」，複製後貼回 App，歌詞只會存在這台裝置。</Note>
+    </div>
+  );
+}
+function YTPlayer(props: { s: Song2 }) {
+  const t = useGrokTheme();
+  const [on, setOn] = useState(false);
+  const s = props.s;
+  const online = typeof navigator === "undefined" || navigator.onLine !== false;
+  if (!s.yt) {
+    return (
+      <div style={{ borderRadius: 12, background: t.bg.subtle, padding: 16, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, justifyItems: "center" }}>
+        <Note>這首歌沒有找到可內嵌播放的官方影片。</Note>
+        <Btn label="▶ 在 YouTube 搜尋" onClick={() => openExt(`https://www.youtube.com/results?search_query=${encodeURIComponent(`${s.a} ${s.t}`)}`)} />
+      </div>
+    );
+  }
+  return (
+    <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", borderRadius: 12, overflow: "hidden", background: "#000" }}>
+      {on ? (
+        <iframe
+          title={`${s.t} 影片`}
+          src={`https://www.youtube-nocookie.com/embed/${s.yt}?autoplay=1&playsinline=1&rel=0&modestbranding=1`}
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
+        />
+      ) : (
+        <button type="button" onClick={() => setOn(true)} aria-label={`播放 ${s.t}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none", padding: 0, cursor: "pointer", background: "#000" }}>
+          <img src={`https://i.ytimg.com/vi/${s.yt}/hqdefault.jpg`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.85 }} onError={(e: { currentTarget: HTMLImageElement }) => { e.currentTarget.style.display = "none"; }} />
+          <span style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)", width: 72, height: 52, borderRadius: 14, background: "rgba(220,0,0,0.92)", color: "#fff", fontSize: 26, display: "flex", alignItems: "center", justifyContent: "center" }}>▶</span>
+          {!online ? <span style={{ position: "absolute", left: 8, bottom: 8, right: 8, color: "#fff", fontSize: 13, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "4px 8px" }}>目前離線：影片需要網路，其餘功能可離線使用</span> : null}
+        </button>
+      )}
+    </div>
+  );
+}
+function SongThemeQuiz(props: { s: Song2 }) {
+  const pool = SONGS2.flatMap((x: Song2) => x.v);
+  const gen = useMemo(() => {
+    const d = deck(props.s.v);
+    return (): Q => {
+      const v = d();
+      const others = shuffle(pool.filter((x: SongV) => x.m !== v.m && x.w !== v.w)).slice(0, 3);
+      return Math.random() < 0.5
+        ? { id: `song:${props.s.id}:${v.w}:m`, sec: "song", tag: "歌曲主題單字：意思", prompt: `「${v.w}」（${v.r}）是什麼意思？`, ...mc(v.m, others.map((x: SongV) => x.m)), tts: v.r, ttsAfter: true, exp: `${v.w}（${v.r}）＝${v.m}` }
+        : { id: `song:${props.s.id}:${v.w}:r`, sec: "song", tag: "歌曲主題單字：讀音", prompt: `「${v.w}」（${v.m}）怎麼念？`, optJa: true, ...mc(v.r, others.map((x: SongV) => x.r).filter((r: string) => r !== v.r)), tts: v.r, ttsAfter: true, exp: `${v.w}（${v.r}）＝${v.m}` };
+    };
+  }, [props.s.id]);
+  const [on, setOn] = useState(false);
+  if (!on) return <Btn kind="primary" label="✏️ 主題單字小測驗（6 題）" onClick={() => setOn(true)} />;
+  return <QuizRunner key={props.s.id} gen={gen} total={6} />;
+}
+function LyricsEditor(props: { s: Song2; onDone: () => void }) {
+  const t = useGrokTheme();
+  const [v, setV] = useState(DB.lyr[props.s.id] ?? "");
+  const [msg, setMsg] = useState("");
+  const save = () => {
+    const x = v.trim();
+    DB.lyr = { ...DB.lyr };
+    if (x) DB.lyr[props.s.id] = x; else delete DB.lyr[props.s.id];
+    commit();
+    setMsg(x ? `✅ 已儲存 ${lyricLines(x).length} 行（只存在這台裝置）` : "已清除歌詞");
+    if (x) props.onDone();
+  };
+  const paste = () => {
+    try {
+      navigator.clipboard.readText().then((s: string) => { if (s) setV(s); else setMsg("剪貼簿是空的"); }).catch(() => setMsg("瀏覽器不允許直接讀剪貼簿，請長按下方輸入框選「貼上」。"));
+    } catch { setMsg("請長按下方輸入框選「貼上」。"); }
+  };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Btn label="🔍 搜尋歌詞（Google）" onClick={() => openExt(lyricsSearchUrl(props.s, "g"))} />
+        <Btn label="🔍 歌ネット" onClick={() => openExt(lyricsSearchUrl(props.s, "u"))} />
+        <Btn label="📋 從剪貼簿貼上" onClick={paste} />
+      </div>
+      <textarea value={v} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setV(e.target.value)} aria-label="貼上歌詞" placeholder={"1. 按上面「搜尋歌詞」，在歌詞網站全選複製\n2. 回到這裡貼上（長按 → 貼上）\n3. 按「儲存歌詞」"} rows={10} lang="ja" style={{ width: "100%", boxSizing: "border-box", font: "inherit", fontFamily: JA_FONT, fontSize: 16, lineHeight: 1.7, padding: 12, borderRadius: 10, border: `1px solid ${t.border.default}`, background: t.bg.base, color: t.text.primary }} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <Btn kind="primary" label="💾 儲存歌詞" onClick={save} />
+        {DB.lyr[props.s.id] ? <Btn label="取消" onClick={props.onDone} /> : null}
+        {msg ? <span role="status" style={{ fontSize: 13 }}>{msg}</span> : null}
+      </div>
+      <Note>歌詞受著作權保護，所以不會內建在公開的 App 裡；你貼上的歌詞只存在這台裝置的瀏覽器（也會包含在「成績 → 備份與還原」的備份裡），不會上傳。</Note>
+    </div>
+  );
+}
+function LyricsView(props: { s: Song2; lines: string[]; toks: (Tok[] | null)[] }) {
+  const t = useGrokTheme();
+  const db = useDB();
+  const [cur, setCur] = useState(-1);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 2 }}>
+      {props.lines.map((l: string, i: number) => (
+        <button key={i} type="button" onClick={() => { setCur(i); speak(l, 0.9); }} aria-label={`朗讀第 ${i + 1} 行`} style={{ font: "inherit", textAlign: "left", cursor: "pointer", border: "none", borderLeft: `3px solid ${cur === i ? t.fill.accent : "transparent"}`, background: cur === i ? t.fill.accentSubtle : "transparent", color: t.text.primary, padding: "6px 10px", borderRadius: 6, minHeight: 44, display: "flex", gap: 8, alignItems: "baseline" }}>
+          <span aria-hidden="true" style={{ fontSize: 11, color: t.text.secondary, minWidth: 18 }}>{i + 1}</span>
+          <span lang="ja" style={{ fontFamily: JA_FONT, fontSize: 17, lineHeight: 2.1 }}><FuriLine toks={props.toks[i] ?? null} text={l} furi={db.furi} /></span>
+        </button>
+      ))}
+    </div>
+  );
+}
+function spanEnd(ts: Tok[], i: number): number {
+  const a = ts[i];
+  if (!a || (a.pos !== "動詞" && a.pos !== "形容詞")) return i;
+  let j = i;
+  while (j + 1 < ts.length) {
+    const n = ts[j + 1]!;
+    const ok = n.pos === "助動詞" || (n.pos === "助詞" && n.pos_detail_1 === "接続助詞" && (n.surface_form === "て" || n.surface_form === "で")) || (n.pos === "動詞" && n.pos_detail_1 === "非自立") || (n.pos === "動詞" && n.pos_detail_1 === "接尾");
+    if (!ok) break;
+    j++;
+  }
+  return j;
+}
+type FillItem = { li: number; ti: number; tj: number; surf: string; rd: string; pos: string; base: string };
+function LyricsFill(props: { s: Song2; lines: string[]; toks: (Tok[] | null)[] }) {
+  const items = useMemo(() => {
+    const out: FillItem[] = [];
+    props.toks.forEach((ts: Tok[] | null, li: number) => {
+      const t2 = ts ?? [];
+      t2.forEach((tok: Tok, ti: number) => {
+        if (!isContent(tok)) return;
+        const tj = spanEnd(t2, ti);
+        const seg = t2.slice(ti, tj + 1);
+        out.push({ li, ti, tj, surf: seg.map((x: Tok) => x.surface_form).join(""), rd: seg.map((x: Tok) => (x.reading ? toHiraS(x.reading) : x.surface_form)).join(""), pos: tok.pos, base: tok.basic_form });
+      });
+    });
+    return out;
+  }, [props.toks]);
+  const gen = useMemo(() => {
+    const d = deck(items);
+    return (): Q => {
+      const it = d();
+      const line = props.lines[it.li] ?? "";
+      const ts = props.toks[it.li] ?? [];
+      const blank = ts.map((x: Tok, j: number) => (j === it.ti ? "（　　）" : j > it.ti && j <= it.tj ? "" : x.surface_form)).join("");
+      const same = shuffle([...new Set(items.filter((x: FillItem) => x.surf !== it.surf && x.pos === it.pos).map((x: FillItem) => x.surf))]);
+      const other = shuffle([...new Set(items.map((x: FillItem) => x.surf).filter((x: string) => x !== it.surf && !same.includes(x)))]);
+      const ds = [...same, ...other].slice(0, 3);
+      return { id: `lyr:${props.s.id}:${it.li}:${it.ti}`, sec: "song", tag: `歌詞填空・第 ${it.li + 1} 行`, prompt: "（　　）中放入哪個詞？\n" + blank, ja: true, optJa: true, ...mc(it.surf, ds), tts: line, ttsAfter: true, exp: `${it.surf}（${it.rd}）　原形：${it.base}\n${line}`, review: blank };
+    };
+  }, [items]);
+  if (new Set(items.map((x: FillItem) => x.surf)).size < 4) return <Note>這首歌詞可出題的單字太少（至少需要 4 個不同的詞）。</Note>;
+  return <QuizRunner key={props.s.id} gen={gen} />;
+}
+function LyricsOrder(props: { s: Song2; lines: string[] }) {
+  const t = useGrokTheme();
+  const uniq = props.lines;
+  const mk = (): { start: number; order: number[] } => {
+    const n = Math.min(4, uniq.length);
+    const start = Math.floor(Math.random() * Math.max(1, uniq.length - n + 1));
+    let order = shuffle([...Array(n).keys()]);
+    if (n > 1 && order.every((x: number, i: number) => x === i)) order = [...order.slice(1), order[0]!];
+    return { start, order };
+  };
+  const [st, setSt] = useState(mk);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [score, setScore] = useState({ c: 0, n: 0 });
+  const n = st.order.length;
+  const done = picked.length === n;
+  const ok = done && picked.every((x: number, i: number) => x === i);
+  useEffect(() => {
+    if (done) { setScore((s: { c: number; n: number }) => ({ c: s.c + (ok ? 1 : 0), n: s.n + 1 })); recordStat("song", ok); commit(); }
+  }, [done]);
+  if (uniq.length < 3) return <Note>歌詞至少要 3 行才能排序。</Note>;
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 8 }}>
+        <span style={{ color: t.text.accent, fontWeight: 600 }}>歌詞排序：依照歌曲順序點選</span>
+        <span style={{ color: t.text.secondary }}>本輪 {score.c}/{score.n}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+        {st.order.map((k: number) => {
+          const pos = picked.indexOf(k);
+          return (
+            <button key={k} type="button" disabled={pos >= 0 || done} onClick={() => setPicked([...picked, k])} style={{ font: "inherit", textAlign: "left", cursor: pos >= 0 ? "default" : "pointer", minHeight: 48, padding: "8px 12px", borderRadius: 10, border: `1px solid ${t.border.default}`, background: pos >= 0 ? t.bg.subtle : t.bg.base, color: t.text.primary, display: "flex", gap: 10, alignItems: "center" }}>
+              <span style={{ minWidth: 24, height: 24, borderRadius: 999, background: pos >= 0 ? t.fill.accent : t.bg.subtle, color: pos >= 0 ? t.text.onColor : t.text.secondary, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>{pos >= 0 ? pos + 1 : "?"}</span>
+              <span lang="ja" style={{ fontFamily: JA_FONT, fontSize: 16 }}>{uniq[st.start + k]}</span>
+            </button>
+          );
+        })}
+      </div>
+      {done ? (
+        <div role="status" style={{ marginTop: 12, padding: 12, borderRadius: 10, background: ok ? t.fill.successSubtle : t.fill.dangerSubtle, borderLeft: `4px solid ${ok ? t.text.success : t.text.danger}` }}>
+          <div style={{ fontWeight: 600 }}>{ok ? "✓ 順序正確！" : "✗ 正確順序："}</div>
+          {!ok ? <ol lang="ja" style={{ margin: "6px 0 0 18px", padding: 0, fontFamily: JA_FONT }}>{st.order.map((_: number, i: number) => <li key={i}>{uniq[st.start + i]}</li>)}</ol> : null}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        <Btn label="↺ 重選" onClick={() => setPicked([])} />
+        <Btn label="🔊 聽這幾行" onClick={() => speak(uniq.slice(st.start, st.start + n).join("。"), 0.9)} />
+        <Btn kind="primary" label="下一題 →" onClick={() => { setSt(mk()); setPicked([]); }} />
+      </div>
+    </Card>
+  );
+}
+function LyricsVocab(props: { toks: (Tok[] | null)[]; tk: Tokenizer | null }) {
+  const t = useGrokTheme();
+  const rows = useMemo(() => {
+    const m = new Map<string, { b: string; n: number; r: string; pos: string }>();
+    props.toks.forEach((ts: Tok[] | null) => (ts ?? []).forEach((tok: Tok) => {
+      if (!isContent(tok)) return;
+      const b = tok.basic_form && tok.basic_form !== "*" ? tok.basic_form : tok.surface_form;
+      const prev = m.get(b);
+      if (prev) { prev.n++; return; }
+      let r = "";
+      if (b === tok.surface_form) r = tok.reading ? toHiraS(tok.reading) : "";
+      else if (props.tk) r = props.tk.tokenize(b).map((x: Tok) => (x.reading ? toHiraS(x.reading) : x.surface_form)).join("");
+      m.set(b, { b, n: 1, r, pos: tok.pos });
+    }));
+    return [...m.values()].sort((a: { n: number }, b: { n: number }) => b.n - a.n);
+  }, [props.toks]);
+  const vmap = useMemo(() => new Map<string, Vocab>(VOCAB.map((v: Vocab): [string, Vocab] => [v.w, v])), []);
+  const known = rows.filter((x: { b: string }) => vmap.has(x.b)).length;
+  return (
+    <Card>
+      <div style={{ fontSize: 13, color: t.text.secondary, marginBottom: 8 }}>從歌詞抽出 {rows.length} 個單字（依出現次數排序），其中 {known} 個在 N3 單字庫裡，有中文意思。</div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+        {rows.map((x: { b: string; n: number; r: string; pos: string }) => {
+          const v = vmap.get(x.b);
+          return (
+            <div key={x.b} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderBottom: `1px solid ${t.border.subtle}`, paddingBottom: 6 }}>
+              <Ruby w={x.b} r={x.r && x.r !== x.b ? x.r : x.b} size={18} />
+              <span style={{ fontSize: 12, color: t.text.secondary }}>{x.pos}・×{x.n}</span>
+              <span style={{ fontSize: 14, flex: 1, minWidth: 80 }}>{v ? v.m : "—"}</span>
+              {v ? <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 999, border: `1px solid ${t.text.success}` }}>N3 單字庫</span> : null}
+              <Speak text={x.r || x.b} />
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+function SongDetail(props: { s: Song2; onBack: () => void }) {
+  const t = useGrokTheme();
+  const db = useDB();
+  const s = props.s;
+  const lyr = db.lyr[s.id] ?? "";
+  const [edit, setEdit] = useState(!lyr);
+  const [mode, setMode] = useState("view");
+  const lines = useMemo(() => lyricLines(lyr), [lyr]);
+  const { tk, st } = useTokenizer(!!lyr && !edit);
+  const toks = useMemo(() => lines.map((l: string) => (tk ? fixToks(tk.tokenize(l)) : null)), [lines, tk]);
+  const fav = !!db.fav[s.id];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <Btn label="← 歌曲庫" onClick={props.onBack} />
+      </div>
+      <Card>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+          <div lang="ja" style={{ fontFamily: JA_FONT, fontSize: 22, fontWeight: 700, lineHeight: 1.3 }}>{s.t}</div>
+          <div lang="ja" style={{ fontFamily: JA_FONT, color: t.text.secondary }}>{s.a}・{s.y} 年</div>
+          {s.tie ? <div lang="ja" style={{ fontFamily: JA_FONT, fontSize: 13, color: t.text.secondary }}>{s.tie}</div> : null}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 12 }}>
+            <span style={{ padding: "2px 8px", borderRadius: 999, background: t.bg.subtle }}>{s.g}</span>
+            <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${lvColor(t, s.lv)}` }}>{s.lv}</span>
+            {lyr ? <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${t.text.success}` }}>📄 已存歌詞 {lines.length} 行</span> : null}
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <YTPlayer s={s} />
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          <Btn on={fav} label={fav ? "♥ 已收藏" : "♡ 收藏"} onClick={() => { DB.fav = { ...DB.fav }; if (fav) delete DB.fav[s.id]; else DB.fav[s.id] = Date.now(); commit(); }} />
+          <Btn label="🔍 搜尋歌詞" onClick={() => openExt(lyricsSearchUrl(s, "g"))} />
+        </div>
+      </Card>
+      <Card title="📝 主題單字與學習重點">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+          {s.v.map((v: SongV) => (
+            <div key={v.w} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <Ruby w={v.w} r={v.r} size={20} />
+              <span>{v.m}</span>
+              <Speak text={v.r} />
+            </div>
+          ))}
+          <div style={{ fontSize: 14, lineHeight: 1.7, background: t.bg.subtle, borderRadius: 8, padding: "8px 12px" }}>{s.note}</div>
+        </div>
+      </Card>
+      <SongThemeQuiz s={s} />
+      <Card title="🎤 歌詞練習">
+        {edit || !lyr ? (
+          <LyricsEditor s={s} onDone={() => setEdit(false)} />
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+            <Chips small scroll value={mode} onChange={setMode} options={[["view", "📄 歌詞＋假名"], ["fill", "✏️ 填空"], ["order", "🔀 排序"], ["vocab", "📚 單字表"]]} />
+            {st === "load" ? <div role="status" style={{ fontSize: 13, color: t.text.secondary }}>⏳ 正在載入斷詞字典（第一次約 18 MB，之後離線也能用）…</div> : null}
+            {st === "err" ? <Note>斷詞字典載入失敗（可能沒有網路）。歌詞仍可顯示與朗讀，連上網路後重新開啟這頁即可加上假名。</Note> : null}
+            {mode === "view" ? <LyricsView s={s} lines={lines} toks={toks} /> : null}
+            {mode === "fill" ? (tk ? <LyricsFill s={s} lines={lines} toks={toks} /> : <Note>需要斷詞字典才能出填空題。</Note>) : null}
+            {mode === "order" ? <LyricsOrder key={s.id} s={s} lines={lines} /> : null}
+            {mode === "vocab" ? (tk ? <LyricsVocab toks={toks} tk={tk} /> : <Note>需要斷詞字典才能抽出單字。</Note>) : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn small label="✏️ 編輯歌詞" onClick={() => setEdit(true)} />
+              <Btn small label="🗑 刪除歌詞" onClick={() => { if (window.confirm("確定刪除這首歌的歌詞？")) { DB.lyr = { ...DB.lyr }; delete DB.lyr[s.id]; commit(); setEdit(true); } }} />
+            </div>
+            <Note>點一行歌詞可以聽朗讀（裝置語音）。假名由斷詞程式自動標註，偶爾會有讀音誤差（特別是歌詞裡的特殊讀法）。</Note>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+function SongTab() {
+  const [m, setM] = useState("lib");
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
+      <Chips value={m} onChange={setM} options={[["lib", `🎵 歌曲庫（${SONGS2.length}）`], ["old", "✏️ 自訂歌詞練習"]]} />
+      {m === "lib" ? <SongLibrary /> : <SongTabOld />}
+    </div>
+  );
+}
