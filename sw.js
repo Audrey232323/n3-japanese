@@ -1,5 +1,5 @@
 /* 日文N3練習 service worker：快取全部檔案，離線可用 */
-const CACHE = "n3-692caac96d";
+const CACHE = "n3-a3e96bf4dc";
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-192.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

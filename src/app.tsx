@@ -7339,10 +7339,14 @@ function kanjiQ(pool: Kanji[], kind: string): Q {
   let d = readPerturb(e.r);
   const sim = shuffle(KANJI.flatMap((y: Kanji) => y.ex.map((z: KanjiEx) => z.r)).filter((r: string) => r !== e.r && Math.abs(r.length - e.r.length) <= 1 && (r[0] === e.r[0] || r.slice(-1) === e.r.slice(-1))));
   d = shuffle([...new Set([...d])]).slice(0, 2);
-  d = [...d, ...sim.filter((r: string) => !d.includes(r))].slice(0, 3);
+  d = [...new Set([...d, ...sim])].filter((r: string) => r !== e.r).slice(0, 3);
   if (d.length < 3) {
     const any = shuffle([...new Set(KANJI.flatMap((y: Kanji) => y.ex.map((z: KanjiEx) => z.r)))].filter((r: string) => r !== e.r && !d.includes(r) && Math.abs(r.length - e.r.length) <= 1));
     d = [...d, ...any].slice(0, 3);
+  }
+  if (d.length < 3) {
+    const rest = shuffle([...new Set(KANJI.flatMap((y: Kanji) => y.ex.map((z: KanjiEx) => z.r)))].filter((r: string) => r !== e.r && !d.includes(r))).sort((a: string, b: string) => Math.abs(a.length - e.r.length) - Math.abs(b.length - e.r.length));
+    d = [...d, ...rest].slice(0, 3);
   }
   return { ...base, id: `kanji:${e.w}:r`, tag: "漢字讀音", prompt: `「${e.w}」怎麼念？（${e.m}）`, big: false, ja: true, optJa: true, ...mc(e.r, d), exp, tts: e.r, ttsAfter: true, review: e.w };
 }
