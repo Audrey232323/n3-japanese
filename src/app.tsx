@@ -1597,7 +1597,7 @@ l66:ふく,すこ,はで,べつ,いろ
 l67:ねつ,きょう,かいしゃ,やす
 l68:でんしゃ,おく,じゅぎょう,ま,あ
 l69:へや,かたづ,で
-l70:さき,しつれい
+l70:しゃしん,と
 l71:ひと
 l72:あした,てつだ
 l73:みち,わ,こま
@@ -1753,6 +1753,9 @@ type DBT = {
   lyr: Record<string, string>;
   fav: Record<string, number>;
   goal?: number;
+  log?: LogE[];
+  wq?: Record<string, Q>;
+  exams?: ExamRes[];
 };
 const KEY = "n3_practice_v1";
 let STORAGE_OK = true;
@@ -1813,6 +1816,8 @@ type Q = {
   optJa?: boolean;
   noReview?: boolean;
   kana?: string[];
+  cat?: string;
+  tags?: string[];
 };
 
 function dkey(d: Date): string {
@@ -1842,7 +1847,8 @@ function streakDays(): number {
   }
   return n;
 }
-function record(q: Q, ok: boolean): void {
+function record(q: Q, ok: boolean, pick?: string): void {
+  logAttempt(q, ok, pick);
   recordStat(q.sec, ok);
   if (!q.noReview) {
     const prev = DB.wrong.find((x: WrongItem) => x.id === q.id);
@@ -3712,7 +3718,7 @@ f|この服は少し派手なので、別の色にします。|派手／地味�
 f|熱があるので、今日は会社を休むことにしました。|休む／辞める／決める／始める|辭書形＋ことにする：決定做…。
 f|電車が遅れたせいで、授業に間に合いませんでした。|間に合いません／似合いません／話し合いません／付き合いません|間に合う（まにあう）：來得及。～せいで：都怪…（不好的原因）。
 f|部屋をきれいに片付けてから、出かけてください。|片付けて／見つけて／気をつけて／届けて|片付ける（かたづける）：整理、收拾。
-r|お先に失礼します。|お疲れさまでした。／いただきます。／お待たせしました。|先下班的人說「お先に失礼します」→ 留下的人回「お疲れさまでした」。
+r|すみません、写真を撮っていただけませんか。|ええ、いいですよ。このボタンを押せばいいですか。／いいえ、写真は撮りませんでした。／はい、写真を撮るのが好きです。|～ていただけませんか：可以請您…嗎（客氣的請求）。答應時說「ええ、いいですよ」。
 r|このケーキ、一ついかがですか。|ありがとうございます。いただきます。／どういたしまして。／いいえ、ごちそうさまでした。|いかがですか：要不要來一個（勸人）。接受時說「いただきます」。
 r|明日、ちょっと手伝ってもらえる？|うん、いいよ。何時ごろ？／うん、手伝ってもらったよ。／ありがとう、助かったよ。|被拜託幫忙 →「好啊，大概幾點？」。
 r|道が分からなくて、困っているんですが…。|どちらへ行かれますか。／それはよかったですね。／いいえ、困りません。|對方迷路 → 問「您要去哪裡？」。行かれる：尊敬語。
@@ -3937,7 +3943,7 @@ function QuizRunner(props: { gen: () => Q; total?: number; onResult?: (q: Q, ok:
     if (picked !== null) return;
     setPicked(i);
     const ok = i === q.answer;
-    record(q, ok);
+    record(q, ok, q.options[i]);
     setScore((s: { c: number; n: number }) => ({ c: s.c + (ok ? 1 : 0), n: s.n + 1 }));
     if (props.onResult) props.onResult(q, ok);
     if (q.ttsAfter && q.tts) speak(q.tts);
@@ -6107,7 +6113,7 @@ function CmpPanel() {
 }
 function GrammarTab() {
   const t = useGrokTheme();
-  const [sub, setSub] = useState<"list" | "fill" | "order" | "cmp">("list");
+  const [sub, setSub] = useState<"list" | "fill" | "order" | "cmp">(() => (PENDING_GRAM >= 0 ? "fill" : "list"));
   const [qq, setQq] = useState("");
   const genFill = useMemo(() => {
     const d = deck(GRAMMAR);
@@ -6206,6 +6212,7 @@ function FullExam() {
   const [now, setNow] = useState(() => Date.now());
   const [scale, setScale] = useState("1");
   const idx = useRef(0);
+  const savedRnd = useRef(false);
   const begin = (i: number, ex: ExSec[]) => {
     idx.current = 0;
     setSi(i);
@@ -6247,6 +6254,7 @@ function FullExam() {
                 const ex = buildExam();
                 setExam(ex);
                 setRes({});
+                savedRnd.current = false;
                 begin(0, ex);
               }}
             />
@@ -6293,6 +6301,7 @@ function FullExam() {
       ["聴解", grp((s: number) => s === 2)],
     ];
     const total = parts.reduce((a: number, x: [string, { n: number; c: number; p: number }]) => a + x[1].p, 0);
+    if (!savedRnd.current) { savedRnd.current = true; window.setTimeout(() => { DB.exams = [...(DB.exams ?? []), { n: 0, t: Date.now(), p: parts.map((x) => x[1].p), tot: total }].slice(-50); commit(); }, 0); }
     const pass = total >= 95 && parts.every((x: [string, { n: number; c: number; p: number }]) => x[1].p >= 19);
     const cats: { cat: string; n: number; c: number }[] = [];
     exam.forEach((x: ExSec, s: number) =>
@@ -6373,7 +6382,7 @@ function FullExam() {
 }
 function MockTab() {
   const [sec, setSec] = useState("all");
-  const [mode, setMode] = useState("prac");
+  const [mode, setMode] = useState("sets");
   const full = mode === "full";
   const items = useMemo(() => MOCK.filter((m: MQ) => sec === "all" || m.s === sec), [sec]);
   const gen = useMemo(() => {
@@ -6393,12 +6402,12 @@ function MockTab() {
     <div style={{ display: "grid", gap: 12 }}>
       <Card>
         <div style={{ display: "grid", gap: 10 }}>
-          <Chips value={mode} onChange={setMode} options={[["prac", "分項練習（隨機）"], ["full", `完整模考（${MOCK.length} 題，依題型順序）`], ["exam", "⏱ 計時模考（N3 正式時間）"]]} />
+          <Chips value={mode} onChange={setMode} options={[["sets", `📚 第1–${EXAMS.length}回 模考`], ["prac", "分項練習（隨機）"], ["full", `完整模考（${MOCK.length} 題，依題型順序）`], ["exam", "⏱ 計時模考（N3 正式時間）"]]} />
           {mode === "prac" ? <Chips small value={sec} onChange={setSec} options={opts} /> : null}
           <Note>全部為原創「模擬題」，仿照 JLPT N3 題型（文字・語彙、文法、讀解），並非官方考古題。</Note>
         </div>
       </Card>
-      {mode === "exam" ? <FullExam /> : <QuizRunner key={`${sec}|${full}`} gen={gen} total={full ? MOCK.length : undefined} />}
+      {mode === "sets" ? <ExamSets /> : mode === "exam" ? <FullExam /> : <QuizRunner key={`${sec}|${full}`} gen={gen} total={full ? MOCK.length : undefined} />}
     </div>
   );
 }
@@ -6735,6 +6744,7 @@ function ReviewTab(props: { go: (tab: string, km?: KMode) => void }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <ActivityPanel />
+      <MistakeAnalysis />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8 }}>
         {SEC_LIST.map((s: Sec) => {
           const st = db.stats[s] ?? { c: 0, w: 0 };
@@ -8867,5 +8877,633 @@ function ActivityPanel() {
         ))}
       </div>
     </Card>
+  );
+}
+
+/* ===== Round 9：錯題分析（每次作答記錄、分類、趨勢、弱點、建議） ===== */
+type LogE = { t: number; i: string; s: string; c: string; k: string[]; ok: 0 | 1; p?: string; a?: string };
+type ExamRes = { n: number; t: number; p: number[]; tot: number };
+const KANA_ROW: Record<string, string> = {};
+ROWS.forEach((r: Row) => r.cells.forEach((c: Kana | null) => { if (c) { KANA_ROW[c.h] = r.name; KANA_ROW[c.k] = r.name; } }));
+const GRAM_BY_ID: Record<string, string> = {};
+GRAMMAR.forEach((g: Gram) => { GRAM_BY_ID[g.id] = g.pat; });
+const VOCAB_BY_ID: Record<string, Vocab> = {};
+VOCAB.forEach((v: Vocab) => { VOCAB_BY_ID[v.id] = v; });
+const TOPIC_NAME: Record<string, string> = Object.fromEntries(TOPICS);
+const SEC_ALL: [string, string][] = [["kana", "50音"], ["kanji", "漢字"], ["vocab", "單字"], ["grammar", "文法"], ["mock", "模擬題"], ["exam", "歷屆風格模考"], ["listen", "聽力"], ["song", "歌曲"]];
+function qMeta(q: Q): { c: string; k: string[] } {
+  const k: string[] = [...(q.tags ?? [])];
+  let c = q.cat ?? "";
+  const id = q.id;
+  const parts = id.split(":");
+  if (id.startsWith("kana:")) {
+    (q.kana ?? []).forEach((ch: string) => { const r = KANA_ROW[ch]; if (r) k.push("row:" + r); });
+    if (!c) c = "假名・" + (q.tag ?? "認讀").split(/[：:（]/)[0];
+  } else if (id.startsWith("kanji:")) {
+    const kk = parts[1] ?? "";
+    [...kk].filter((ch: string) => KANJI_BY.has(ch)).forEach((ch: string) => k.push("kj:" + ch));
+    if (!c) c = parts[2] === "m" ? "漢字・意思" : parts[2] === "w" ? "漢字・寫法" : "漢字・讀音";
+  } else if (id.startsWith("vocab:")) {
+    const v = VOCAB_BY_ID[parts[1] ?? ""];
+    if (v) { k.push("v:" + v.w, "vt:" + (TOPIC_OF[v.w] ?? "other")); [...v.w].filter((ch: string) => KANJI_BY.has(ch)).forEach((ch: string) => k.push("kj:" + ch)); }
+    if (!c) c = parts[2] === "w2r" ? "單字・讀音" : parts[2] === "m2w" ? "單字・中→日" : parts[2] === "card" ? "單字・翻卡" : "單字・意思";
+  } else if (id.startsWith("grammar:")) {
+    const g = GRAM_BY_ID[parts[1] ?? ""];
+    if (g) k.push("g:" + g);
+    if (!c) c = (parts[1] ?? "").startsWith("cmp") ? "文法・易混比較" : (parts[1] ?? "").startsWith("o") ? "文法・句子排序" : "文法・填空";
+  } else if (id.startsWith("mock:")) {
+    if (!c) c = (q.tag ?? "").replace(/^模擬題・/, "");
+  } else if (id.startsWith("listen:")) {
+    if (!c) c = "聴解・" + (q.tag ?? "").split(/[：:]/)[0];
+  } else if (id.startsWith("song") || id.startsWith("lyr")) {
+    if (!c) c = "歌曲";
+  }
+  if (!c) c = q.tag ?? SEC_NAME[q.sec] ?? q.sec;
+  return { c, k: [...new Set(k)] };
+}
+function logAttempt(q: Q, ok: boolean, pick?: string): void {
+  const m = qMeta(q);
+  const e: LogE = { t: Date.now(), i: q.id, s: q.sec, c: m.c, k: m.k, ok: ok ? 1 : 0 };
+  if (!ok) { e.p = (pick ?? "").slice(0, 60); e.a = (q.options[q.answer] ?? "").slice(0, 60); }
+  const log = DB.log ?? [];
+  log.push(e);
+  if (log.length > 5000) log.splice(0, log.length - 5000);
+  DB.log = log;
+  const wq = { ...(DB.wq ?? {}) };
+  if (!ok && !q.noReview) {
+    const { passage, ...rest } = q;
+    wq[q.id] = passage && passage.length > 1500 ? rest : q;
+    const ks = Object.keys(wq);
+    if (ks.length > 150) delete wq[ks[0] ?? ""];
+  } else if (ok && wq[q.id] && !(DB.wrong ?? []).some((w: WrongItem) => w.id === q.id)) delete wq[q.id];
+  DB.wq = wq;
+}
+const SMALL_K: Record<string, string> = { ゃ: "や", ゅ: "ゆ", ょ: "よ", っ: "つ", ぁ: "あ", ぃ: "い", ぅ: "う", ぇ: "え", ぉ: "お" };
+function deDaku(s: string): string {
+  return s.normalize("NFD").replace(/[\u3099\u309a]/g, "").normalize("NFC");
+}
+function whyWrong(p: string, a: string): string {
+  if (!p || !a || p === a) return "";
+  const kanaOnly = (s: string) => /^[\u3041-\u309f\u30a0-\u30ffー]+$/.test(s);
+  if (kanaOnly(p) && kanaOnly(a)) {
+    if (deDaku(p) === deDaku(a)) return "濁音／半濁音混淆（゛゜）";
+    if (p.replace(/っ/g, "") === a.replace(/っ/g, "")) return "促音「っ」有無";
+    if (p.replace(/[うーい]/g, "") === a.replace(/[うーい]/g, "")) return "長音（う・い・ー）有無";
+    const big = (s: string) => [...s].map((c: string) => SMALL_K[c] ?? c).join("");
+    if (big(p) === big(a)) return "拗音大小字（ゃゅょ）";
+    if (p.length === a.length && [...p].filter((c: string, i: number) => c !== a[i]).length === 1) return "讀音只差一個假名";
+    return "讀音不熟";
+  }
+  if (p.length === a.length && p.length <= 6) {
+    const d = [...p].map((c: string, i: number): [string, string] => [c, a[i] ?? ""]).filter((x: [string, string]) => x[0] !== x[1]);
+    if (d.length === 1 && /[\u4e00-\u9fff]/.test(d[0]?.[0] ?? "")) return `漢字混淆：${d[0]?.[1]} ↔ ${d[0]?.[0]}（同音或形近）`;
+  }
+  const end = (s: string) => s.replace(/[。．、]/g, "").slice(-3);
+  if (p.length < 16 && a.length < 16 && end(p) !== end(a) && /[\u3041-\u309f]/.test(p)) return "文法形式／接續不熟";
+  return "意思或用法混淆";
+}
+function tagLabel(t: string): string {
+  const [ty, ...r] = t.split(":");
+  const v = r.join(":");
+  return ty === "row" ? `假名 ${v}` : ty === "kj" ? `漢字 ${v}` : ty === "v" ? `單字 ${v}` : ty === "vt" ? `主題 ${TOPIC_NAME[v] ?? "其他"}` : ty === "g" ? `文法 ${v}` : v;
+}
+function agg<T extends string>(log: LogE[], key: (e: LogE) => T[]): { k: T; n: number; w: number }[] {
+  const m = new Map<T, { n: number; w: number }>();
+  log.forEach((e: LogE) => key(e).forEach((k: T) => { const x = m.get(k) ?? { n: 0, w: 0 }; x.n++; if (!e.ok) x.w++; m.set(k, x); }));
+  return [...m.entries()].map(([k, x]: [T, { n: number; w: number }]) => ({ k, ...x }));
+}
+function AccRow(props: { label: string; n: number; w: number; onGo?: () => void; goLabel?: string }) {
+  const t = useGrokTheme();
+  const acc = props.n ? (props.n - props.w) / props.n : 0;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "center", fontSize: 13 }}>
+      <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{props.label}</span>
+          <span style={{ color: t.text.secondary, whiteSpace: "nowrap" }}>錯 {props.w}／{props.n}・{Math.round(acc * 100)}%</span>
+        </div>
+        <Bar v={acc} color={acc >= 0.8 ? t.text.success : acc >= 0.6 ? t.text.warning : t.text.danger} label={props.label} />
+      </div>
+      {props.onGo ? <Btn small label={props.goLabel ?? "練習"} onClick={props.onGo} /> : <span />}
+    </div>
+  );
+}
+function navTo(tab: string): void {
+  window.dispatchEvent(new CustomEvent("n3nav", { detail: tab }));
+}
+function tagAction(tag: string): (() => void) | undefined {
+  const [ty, ...r] = tag.split(":");
+  const v = r.join(":");
+  if (ty === "kj") return () => openKanji(v);
+  if (ty === "g") { const i = GRAMMAR.findIndex((g: Gram) => g.pat === v); if (i >= 0) return () => { PENDING_GRAM = i; navTo("grammar"); }; }
+  if (ty === "row") return () => { KANA_START = "weak5"; navTo("kana"); };
+  if (ty === "v" || ty === "vt") return () => navTo("vocab");
+  return undefined;
+}
+function MistakeAnalysis() {
+  const t = useGrokTheme();
+  const db = useDB();
+  const [view, setView] = useState("sum");
+  const [drill, setDrill] = useState<string[] | null>(null);
+  const topRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (drill && topRef.current) topRef.current.scrollIntoView({ block: "start" }); }, [drill]);
+  const log = db.log ?? [];
+  const wrong = log.filter((e: LogE) => !e.ok);
+  const bySec = agg(log, (e: LogE) => [e.s]).sort((a, b) => b.w / Math.max(1, b.n) - a.w / Math.max(1, a.n));
+  const byCat = agg(log, (e: LogE) => [e.c]).filter((x) => x.w > 0).sort((a, b) => b.w - a.w || b.n - a.n);
+  const byTag = agg(log, (e: LogE) => e.k).filter((x) => x.w > 0);
+  const tagOf = (p: string) => byTag.filter((x) => x.k.startsWith(p)).sort((a, b) => (b.w - (b.n - b.w) * 0.5) - (a.w - (a.n - a.w) * 0.5)).slice(0, 8);
+  const why = agg(wrong, (e: LogE) => { const w = whyWrong(plain(e.p ?? ""), plain(e.a ?? "")); return w ? [w.replace(/：.*/, "")] : []; }).sort((a, b) => b.n - a.n);
+  // 最弱 10 題：錯的次數多、最近錯、之後沒答對
+  const items = new Map<string, { w: number; r: number; last: number; e: LogE }>();
+  log.forEach((e: LogE) => { const x = items.get(e.i) ?? { w: 0, r: 0, last: 0, e }; if (e.ok) x.r++; else { x.w++; x.e = e; x.last = e.t; } items.set(e.i, x); });
+  const weakest = [...items.entries()].filter(([, x]) => x.w > 0 && x.w > x.r - 1).map(([i, x]) => ({ i, ...x, sc: x.w * 2 - x.r + (Date.now() - x.last < 7 * 864e5 ? 1 : 0) })).sort((a, b) => b.sc - a.sc).slice(0, 10);
+  // 趨勢：最近 6 週各區正確率
+  const wk = (ts: number) => Math.floor((Date.now() - ts) / (7 * 864e5));
+  const weeks = [5, 4, 3, 2, 1, 0];
+  const trend = SEC_ALL.map(([s, nm]: [string, string]) => ({ s, nm, v: weeks.map((w: number) => { const xs = log.filter((e: LogE) => e.s === s && wk(e.t) === w); return xs.length ? { n: xs.length, a: xs.filter((e: LogE) => e.ok).length / xs.length } : null; }) })).filter((x) => x.v.some(Boolean));
+  const exams = (db.exams ?? []).slice(-8);
+  // 建議
+  const rec: { txt: string; go?: () => void; gl?: string }[] = [];
+  if (log.length < 30) rec.push({ txt: `目前只有 ${log.length} 筆作答紀錄，多做一些題目（30 題以上）分析才會準。` });
+  const worstSec = bySec.find((x) => x.n >= 10 && x.w / x.n > 0.3);
+  if (worstSec) rec.push({ txt: `「${SEC_NAME[worstSec.k as Sec] ?? worstSec.k}」正確率 ${Math.round((1 - worstSec.w / worstSec.n) * 100)}%，是目前最弱的區塊，建議每天先做 10 題。`, go: () => navTo(worstSec.k === "exam" ? "mock" : worstSec.k), gl: "去練習" });
+  const w0 = why[0];
+  if (w0 && w0.n >= 3) {
+    const tip: Record<string, string> = { "濁音／半濁音混淆（゛゜）": "讀音時特別注意 か／が、た／だ、は／ば／ぱ；用「50音 › 濁音・拗音」練習。", "促音「っ」有無": "小「っ」要停頓一拍（がっこう、きって）；用「50音 › 促音・長音」練習。", "長音（う・い・ー）有無": "長音要拉長一拍（こうこう、えいが）；音讀「〜う」「〜い」常是長音。", "拗音大小字（ゃゅょ）": "きゃ／きや 意思完全不同；拗音是一拍。", "漢字混淆": "同音或形近漢字多，記「詞」不要只記「字」：到漢字頁看例詞與同音讀漢字。", "文法形式／接續不熟": "注意接續（辭書形／た形／ない形／名詞＋の），到「文法一覽」看接續說明。", "意思或用法混淆": "看解說中的對比，並把錯題加到翻卡複習。", "讀音不熟": "漢字讀音不熟：用「漢字 › 漢字測驗 › 例詞讀音」與單字記憶卡。", "讀音只差一個假名": "讀音只差一個假名：唸出聲來比較，注意清濁與長短。" };
+    rec.push({ txt: `最常見的錯誤類型是「${w0.k}」（${w0.n} 次）。${tip[w0.k] ?? ""}` });
+  }
+  const wr = tagOf("row:")[0];
+  if (wr && wr.w >= 3) rec.push({ txt: `假名「${wr.k.slice(4)}」錯了 ${wr.w} 次，先用「🎯 最弱 5 字」集中練。`, go: tagAction(wr.k), gl: "練最弱 5 字" });
+  const wg = tagOf("g:")[0];
+  if (wg && wg.w >= 2) rec.push({ txt: `文法「${wg.k.slice(2)}」錯了 ${wg.w} 次，建議重看接續和例句，再做填空。`, go: tagAction(wg.k), gl: "練這個文法" });
+  const wkj = tagOf("kj:")[0];
+  if (wkj && wkj.w >= 2) rec.push({ txt: `漢字「${wkj.k.slice(3)}」錯了 ${wkj.w} 次，看筆順、部件與例詞。`, go: tagAction(wkj.k), gl: "看這個漢字" });
+  const le = exams[exams.length - 1];
+  if (le) {
+    const nm = ["言語知識", "読解", "聴解"];
+    const lo = le.p.map((v: number, i: number): [number, number] => [v, i]).filter((x) => x[0] < 19);
+    rec.push({ txt: lo.length ? `最近一次模考：${lo.map((x) => `${nm[x[1]]} ${x[0]} 分`).join("、")}，低於單科合格線 19 分，要優先加強。` : le.tot >= 95 ? `最近一次模考 ${le.tot}/180，已達合格標準 95 分，試試下一回並縮短時間。` : `最近一次模考 ${le.tot}/180，距合格 95 分還差 ${95 - le.tot} 分。` });
+  }
+  const due = VOCAB.filter((v: Vocab) => { const s = db.vsrs[v.id]; return s && s.due <= dayNum(); }).length;
+  if (due >= 20) rec.push({ txt: `單字記憶卡有 ${due} 張到期，先清掉到期卡，記憶效果最好。`, go: () => navTo("vocab"), gl: "去複習" });
+  if (!rec.length) rec.push({ txt: "目前沒有明顯弱點，繼續保持！可以挑戰一回完整模考。" });
+  const drillGen = useMemo(() => {
+    if (!drill) return null;
+    const qs = drill.map((i: string) => (DB.wq ?? {})[i]).filter(Boolean) as Q[];
+    let n = 0;
+    return (): Q => { const q = qs[n++ % Math.max(1, qs.length)] as Q; const opts = shuffle(q.options.map((o: string, j: number): [string, boolean] => [o, j === q.answer])); return { ...q, options: opts.map((x) => x[0]), answer: opts.findIndex((x) => x[1]) }; };
+  }, [drill]);
+  if (drill && drillGen) {
+    return (
+      <div ref={topRef} style={{ scrollMarginTop: 8 }}><Card title={`🎯 針對練習（${drill.length} 題）`}>
+        <div style={{ marginBottom: 8 }}><Btn small label="← 回錯題分析" onClick={() => setDrill(null)} /></div>
+        <QuizRunner gen={drillGen} total={drill.length * 2} />
+      </Card></div>
+    );
+  }
+  const canDrill = (ids: string[]) => ids.filter((i: string) => (db.wq ?? {})[i]);
+  const allWeakIds = canDrill(weakest.map((x) => x.i));
+  return (
+    <Card title="🔍 錯題分析">
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ fontSize: 13, color: t.text.secondary }}>共 {log.length} 筆作答、答錯 {wrong.length} 次（從這個版本開始記錄；最多保留最近 5000 筆）</div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>💡 學習建議</div>
+          {rec.slice(0, 5).map((r, i: number) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", background: t.bg.subtle, borderRadius: 8, padding: "8px 10px", fontSize: 13, lineHeight: 1.6 }}>
+              <span style={{ flex: 1, minWidth: 180 }}>{r.txt}</span>
+              {r.go ? <Btn small label={r.gl ?? "練習"} onClick={r.go} /> : null}
+            </div>
+          ))}
+        </div>
+        <Chips small value={view} onChange={setView} options={[["sum", "最弱 10 題"], ["sec", "依區塊／題型"], ["tag", "依知識點"], ["why", "為什麼錯"], ["trend", "趨勢・模考"]]} />
+        {view === "sum" ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {weakest.length ? (allWeakIds.length ? <div><Btn kind="primary" label={`🎯 一鍵練這 ${allWeakIds.length} 題`} onClick={() => setDrill(allWeakIds)} /></div> : null) : <Note>還沒有答錯的題目。</Note>}
+            {weakest.map((x, n: number) => (
+              <div key={x.i} style={{ border: `1px solid ${t.border.subtle}`, borderRadius: 10, padding: "8px 10px", display: "grid", gap: 4, fontSize: 13 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 6, alignItems: "center" }}>
+                  <span style={{ color: t.text.accent, fontSize: 12 }}>{n + 1}. {x.e.c}・錯 {x.w} 次／對 {x.r} 次</span>
+                  {(db.wq ?? {})[x.i] ? <Btn small label="練這題" onClick={() => setDrill([x.i])} /> : null}
+                </div>
+                <div lang="ja" style={{ fontFamily: JA_FONT, whiteSpace: "pre-wrap", maxHeight: 66, overflow: "hidden" }}>{plain((db.wq ?? {})[x.i]?.review ?? (db.wq ?? {})[x.i]?.prompt ?? x.i)}</div>
+                {x.e.p ? <div><span style={{ color: t.text.danger }}>你選：{plain(x.e.p)}</span>　<span style={{ color: t.text.success }}>正確：{plain(x.e.a ?? "")}</span></div> : null}
+                {x.e.p ? <div style={{ color: t.text.secondary }}>可能原因：{whyWrong(plain(x.e.p), plain(x.e.a ?? ""))}</div> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {view === "sec" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>各區塊</div>
+            {bySec.map((x) => <AccRow key={x.k} label={SEC_ALL.find((y) => y[0] === x.k)?.[1] ?? x.k} n={x.n} w={x.w} onGo={x.k === "exam" ? () => navTo("mock") : () => navTo(x.k)} goLabel="前往" />)}
+            <div style={{ fontWeight: 600, fontSize: 13, marginTop: 6 }}>各題型（錯最多的在前）</div>
+            {byCat.slice(0, 20).map((x) => {
+              const ids = canDrill([...new Set(wrong.filter((e: LogE) => e.c === x.k).map((e: LogE) => e.i))]).slice(0, 15);
+              return <AccRow key={x.k} label={x.k} n={x.n} w={x.w} onGo={ids.length ? () => setDrill(ids) : undefined} goLabel={`練錯題 ${ids.length}`} />;
+            })}
+          </div>
+        ) : null}
+        {view === "tag" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            {[["g:", "文法點"], ["kj:", "漢字"], ["vt:", "單字主題"], ["v:", "單字"], ["row:", "假名行"]].map(([p, nm]: string[]) => {
+              const xs = tagOf(p ?? "");
+              return xs.length ? (
+                <div key={p} style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{nm}</div>
+                  {xs.map((x) => <AccRow key={x.k} label={tagLabel(x.k)} n={x.n} w={x.w} onGo={tagAction(x.k)} goLabel={p === "kj:" ? "看漢字" : "練習"} />)}
+                </div>
+              ) : null;
+            })}
+            {!byTag.length ? <Note>還沒有可以分類的錯題。</Note> : null}
+          </div>
+        ) : null}
+        {view === "why" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <Note>依你選的錯誤選項和正確答案比較，自動判斷錯誤類型。</Note>
+            {why.map((x) => <AccRow key={x.k} label={x.k} n={x.n} w={x.n} />)}
+            {wrong.slice(-12).reverse().map((e: LogE, i: number) => (
+              <div key={i} style={{ fontSize: 13, borderTop: `1px solid ${t.border.subtle}`, paddingTop: 6 }}>
+                <span style={{ color: t.text.secondary }}>{e.c}：</span>
+                <span lang="ja" style={{ color: t.text.danger }}>{plain(e.p ?? "")}</span> → <span lang="ja" style={{ color: t.text.success }}>{plain(e.a ?? "")}</span>
+                <span style={{ color: t.text.secondary }}>（{whyWrong(plain(e.p ?? ""), plain(e.a ?? ""))}）</span>
+              </div>
+            ))}
+            {!why.length ? <Note>還沒有錯題。</Note> : null}
+          </div>
+        ) : null}
+        {view === "trend" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>最近 6 週正確率</div>
+            <div style={{ display: "grid", gridTemplateColumns: "72px repeat(6, minmax(0, 1fr))", gap: 3, fontSize: 11, textAlign: "center" }}>
+              <span />
+              {weeks.map((w: number) => <span key={w} style={{ color: t.text.secondary }}>{w === 0 ? "本週" : `${w}週前`}</span>)}
+              {trend.map((r) => [
+                <span key={r.s} style={{ textAlign: "left", fontSize: 12 }}>{r.nm}</span>,
+                ...r.v.map((c, j: number) => (
+                  <span key={r.s + j} title={c ? `${c.n} 題` : ""} style={{ borderRadius: 4, padding: "5px 0", background: c ? (c.a >= 0.8 ? t.fill.successSubtle : c.a >= 0.6 ? t.fill.warningSubtle : t.fill.dangerSubtle) : "transparent", color: t.text.primary }}>{c ? Math.round(c.a * 100) : "·"}</span>
+                )),
+              ])}
+            </div>
+            {!trend.length ? <Note>還沒有資料。</Note> : null}
+            <div style={{ fontWeight: 600, fontSize: 13, marginTop: 6 }}>模考成績紀錄（合格：總分 95、各科 19）</div>
+            {exams.length ? exams.slice().reverse().map((x: ExamRes, i: number) => (
+              <div key={i} style={{ fontSize: 13, display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${t.border.subtle}`, paddingTop: 6 }}>
+                <span>{x.n ? `第${x.n}回` : "隨機模考"}</span>
+                <span style={{ color: t.text.secondary }}>{new Date(x.t).toLocaleDateString("zh-TW")}</span>
+                <b style={{ color: x.tot >= 95 && x.p.every((v: number) => v >= 19) ? t.text.success : t.text.danger }}>{x.tot}/180</b>
+                <span>言語 {x.p[0]}・読解 {x.p[1]}・聴解 {x.p[2]}</span>
+              </div>
+            )) : <Note>還沒有完成的模考。</Note>}
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+const EXAMS_RAW = `E|1|1
+P|g1|＜留学生[りゅうがくせい]の作文[さくぶん]「日本[にほん]のコンビニ」＞⏎私[わたし]が日本[にほん]に来[き]ていちばん驚[おどろ]いたのは、コンビニの多[おお]さです。私[わたし]のアパートの近[ちか]くにも、歩[ある]いて五分[ごふん]の所[ところ]に三[みっ]つもあります。コンビニでは、食[た]べ物[もの]や飲[の]み物[もの]（1）、コピーをしたり、荷物[にもつ]を送[おく]ったりすることもできます。⏎最初[さいしょ]は、こんなにたくさんのコンビニが（2）のかと思[おも]っていました。しかし、実際[じっさい]に生活[せいかつ]してみると、とても便利[べんり]です。夜[よる]遅[おそ]くまでアルバイトをしたあとでも、温[あたた]かいお弁当[べんとう]を買[か]うことが（3）。⏎（4）、コンビニでお弁当[べんとう]を買[か]うと、店員[てんいん]さんが「温[あたた]めますか」と聞[き]いてくれます。私[わたし]の国[くに]にはこのようなサービスはないので、初[はじ]めて聞[き]いたときは、何[なに]と答[こた]えればいいか分[わ]かりませんでした。今[いま]では、いつも「お願[ねが]いします」と答[こた]えて（5）。
+P|r1|山田[やまだ]さんへ⏎明日[あした]の会議[かいぎ]の資料[しりょう]ですが、コピーが二[に]十[じゅう]部[ぶ]では足[た]りないので、三[さん]十[じゅう]部[ぶ]にしてください。それから、会議[かいぎ]室[しつ]がA室[しつ]からC室[しつ]に変[か]わりました。C室[しつ]のプロジェクターは古[ふる]いので、使[つか]う前[まえ]に一度[いちど]確認[かくにん]しておいてください。⏎鈴木[すずき]
+P|r2|＜駅前[えきまえ]駐輪場[ちゅうりんじょう]の利用[りよう]について＞⏎来月[らいげつ]から、駅前[えきまえ]の駐輪場[ちゅうりんじょう]は、登録[とうろく]した人[ひと]しか利用[りよう]できなくなります。登録[とうろく]は市役所[しやくしょ]の窓口[まどぐち]でできます。登録[とうろく]料[りょう]は一[いち]年間[ねんかん]で千[せん]二[に]百[ひゃく]円[えん]ですが、学生[がくせい]は六[ろく]百[ひゃく]円[えん]です。登録[とうろく]するときは、住所[じゅうしょ]が分[わ]かるものを持[も]ってきてください。学生[がくせい]の方[ほう]は、学生[がくせい]証[しょう]も必要[ひつよう]です。
+P|r3|私[わたし]は毎朝[まいあさ]、同[おな]じ時間[じかん]の電車[でんしゃ]に乗[の]る。毎日[まいにち]見[み]る顔[かお]がいくつかあって、話[はな]したことはないが、なんとなく知[し]り合[あ]いのような気[き]がする。先週[せんしゅう]、いつも窓[まど]の近[ちか]くで本[ほん]を読[よ]んでいる女性[じょせい]が乗[の]ってこなかった。たった一日[いちにち]のことなのに、私[わたし]は一日中[いちにちじゅう]その人[ひと]のことが気[き]になってしまった。名前[なまえ]も知[し]らない人[ひと]なのに、不思議[ふしぎ]なものだ。
+P|r4|田中[たなか]様[さま]⏎先日[せんじつ]ご注文[ちゅうもん]いただいたコーヒーカップですが、人気[にんき]のため在庫[ざいこ]がなくなってしまいました。申[もう]し訳[わけ]ありません。来月[らいげつ]十日[とおか]に入荷[にゅうか]する予定[よてい]です。お待[ま]ちいただける場合[ばあい]は、入荷[にゅうか]後[ご]すぐにお送[おく]りします。キャンセルをご希望[きぼう]の場合[ばあい]は、今月[こんげつ]末[まつ]までにこのメールにご返信[へんしん]ください。⏎さくら食器[しょっき]店[てん]
+P|m1|私[わたし]は三十歳[さんじゅっさい]になるまで、ほとんど料理[りょうり]をしたことがなかった。一人暮[ひとりぐ]らしを始[はじ]めてからも、毎日[まいにち]コンビニのお弁当[べんとう]や外食[がいしょく]ばかりだった。⏎ある日[ひ]、健康[けんこう]診断[しんだん]で「野菜[やさい]が足[た]りていませんね」と言[い]われた。それで、①自分[じぶん]で料理[りょうり]をしてみることにした。最初[さいしょ]は野菜[やさい]を切[き]るのにも時間[じかん]がかかり、味[あじ]もあまりよくなかった。それでも、自分[じぶん]で作[つく]ったものは、なぜかおいしく感[かん]じた。⏎料理[りょうり]を続[つづ]けているうちに、もう一[ひと]つ気[き]づいたことがある。②お金[かね]があまりかからないことだ。外食[がいしょく]ばかりしていたころに比[くら]べて、食費[しょくひ]が半分[はんぶん]ぐらいになった。⏎今[いま]では、週末[しゅうまつ]に友達[ともだち]を呼[よ]んで料理[りょうり]を作[つく]ることもある。友達[ともだち]が「おいしい」と言[い]ってくれると、とてもうれしい。料理[りょうり]は、健康[けんこう]のためだけでなく、人[ひと]とのつながりも作[つく]ってくれるのだと思[おも]う。
+P|m2|最近[さいきん]、昼休[ひるやす]みに短[みじか]い昼寝[ひるね]をする会社[かいしゃ]員[いん]が増[ふ]えているそうだ。昼[ひる]ご飯[はん]を食[た]べたあとに眠[ねむ]くなるのは自然[しぜん]なことで、無理[むり]に我慢[がまん]して仕事[しごと]を続[つづ]けても、あまり効率[こうりつ]は上[あ]がらない。⏎ある会社[かいしゃ]では、昼休[ひるやす]みに十五分[じゅうごふん]ほど寝[ね]てもいい部屋[へや]を作[つく]った。最初[さいしょ]は「仕事[しごと]中[ちゅう]に寝[ね]るなんて」という声[こえ]もあったが、①実際[じっさい]に始[はじ]めてみると、午後[ごご]のミスが減[へ]ったという。⏎ただし、昼寝[ひるね]は長[なが]ければいいというものではない。三十分[さんじゅっぷん]以上[いじょう]寝[ね]てしまうと、深[ふか]い眠[ねむ]りに入[はい]ってしまい、起[お]きたあとでかえって頭[あたま]がぼんやりする。また、夜[よる]に眠[ねむ]れなくなることもある。そのため、②昼寝[ひるね]は二十分[にじゅっぷん]ぐらいまでにするのがいいそうだ。
+P|L1|私[わたし]が住[す]んでいる町[まち]では、毎年[まいとし]夏[なつ]に大[おお]きなお祭[まつ]りがある。三[さん]年[ねん]前[まえ]、町内[ちょうない]会[かい]の人[ひと]に誘[さそ]われて、初[はじ]めてお祭[まつ]りのボランティアをした。⏎仕事[しごと]は、会場[かいじょう]のごみを集[あつ]めたり、道[みち]に迷[まよ]った人[ひと]を案内[あんない]したりすることだった。朝[あさ]から夜[よる]まで外[そと]にいたので、とても疲[つか]れた。正直[しょうじき]に言[い]うと、①一[いち]年[ねん]目[め]は「もうやりたくない」と思[おも]った。⏎ところが、次[つぎ]の年[とし]も同[おな]じ町内[ちょうない]会[かい]の人[ひと]から電話[でんわ]があった。断[ことわ]ろうと思[おも]ったが、「去年[きょねん]、あなたが助[たす]けたおばあさんが、お礼[れい]を言[い]いに来[き]ましたよ」と言[い]われた。そのおばあさんは、孫[まご]と一緒[いっしょ]にお祭[まつ]りに来[き]て、迷子[まいご]になった孫[まご]を探[さが]していたのだ。私[わたし]は一緒[いっしょ]に探[さが]しただけで、特別[とくべつ]なことをしたつもりはなかった。でも、その話[はなし]を聞[き]いて、②もう一度[いちど]やってみようという気持[きも]ちになった。⏎二[に]年[ねん]目[め]からは、仕事[しごと]にも慣[な]れ、少[すこ]し余裕[よゆう]が出[で]てきた。会場[かいじょう]に来[く]る人[ひと]たちの笑顔[えがお]を見[み]ると、疲[つか]れも気[き]にならなくなった。今年[ことし]は、若[わか]い人[ひと]たちにボランティアの仕事[しごと]を教[おし]える係[かかり]もした。⏎ボランティアというと、だれかのために何[なに]かをしてあげることだと思[おも]っていた。しかし、今[いま]では、③自分[じぶん]のほうがたくさんのものをもらっていると感[かん]じている。
+P|i1|＜さくら市民[しみん]センター　夏[なつ]の料理[りょうり]教室[きょうしつ]＞⏎①和食[わしょく]の基本[きほん]：毎週[まいしゅう]月曜日[げつようび] 18:00〜20:00（全[ぜん]4回[かい]）8,000円[えん]⏎②親子[おやこ]でパン作[づく]り：7月[がつ]20日（土[ど]）10:00〜12:00（1回[かい]）親子[おやこ]1組[くみ] 2,500円[えん]　※小学生[しょうがくせい]と保護[ほご]者[しゃ]⏎③30分[ふん]でできる夕[ゆう]ご飯[はん]：毎週[まいしゅう]水曜日[すいようび] 19:00〜20:30（全[ぜん]4回[かい]）6,000円[えん]⏎④世界[せかい]のお菓子[かし]：7月[がつ]27日（土[ど]）14:00〜16:00（1回[かい]）1,500円[えん]⏎・申[もう]し込[こ]みは7月[がつ]10日までに、センターの受付[うけつけ]か電話[でんわ]でお願[ねが]いします。⏎・材料[ざいりょう]費[ひ]は料金[りょうきん]に入[はい]っています。⏎・②は先[さき]に申[もう]し込[こ]んだ15組[くみ]までです。
+Q|漢字読み|-|【授業】は九[く]時[じ]に始[はじ]まる。|じゅぎょう／じゅぎょ／じょぎょう／じゅぎゅう|授業（じゅぎょう）：課。其他選項的清濁、長音、促音或拗音不對。|v:授業
+Q|漢字読み|-|【上司】に相談[そうだん]してから決[き]めます。|じょうし／じょし／じゅうし／しょうし|上司（じょうし）：上司。其他選項的清濁、長音、促音或拗音不對。|v:上司
+Q|漢字読み|-|会社[かいしゃ]で年[とし]に一回[いっかい]、【健康診断】がある。|けんこうしんだん／げんこうしんだん／けんこうじんだん／けんごうしんだん|健康診断（けんこうしんだん）：健康檢查。其他選項的清濁、長音、促音或拗音不對。|v:健康診断
+Q|漢字読み|-|この【書類】にサインしてください。|しょるい／しゅるい／じょるい／しょうるい|書類（しょるい）：文件。其他選項的清濁、長音、促音或拗音不對。|v:書類
+Q|漢字読み|-|空港[くうこう]で円[えん]に【両替】した。|りょうがえ／りょうかえ／りょがえ／りゅうがえ|両替（りょうがえ）：換錢。其他選項的清濁、長音、促音或拗音不對。|v:両替
+Q|漢字読み|-|【不思議】なことに、かぎがかばんの中[なか]にあった。|ふしぎ／ぷしぎ／ぶしぎ／ふしき|不思議（ふしぎ）：不可思議、奇怪。其他選項的清濁、長音、促音或拗音不對。|v:不思議
+Q|漢字読み|-|【順番】に並[なら]んでください。|じゅんばん／しゅんばん／じゅんはん／じょんばん|順番（じゅんばん）：順序、輪到。其他選項的清濁、長音、促音或拗音不對。|v:順番
+Q|漢字読み|-|この寺[てら]には長[なが]い【歴史】がある。|れきし／れっし／れぎし／れきじ|歴史（れきし）：歷史。其他選項的清濁、長音、促音或拗音不對。|v:歴史
+Q|表記|-|単語[たんご]を毎日[まいにち]二[に]十個[じゅっこ]【あんき】する。|暗記／暗寄／暗幾／暗喜|あんき＝暗記：背誦。其他選項是讀音相同的錯字。|v:暗記
+Q|表記|-|姉[あね]は明[あか]るい【せいかく】です。|性格／政格／声格／精格|せいかく＝性格：個性。其他選項是讀音相同的錯字。|v:性格
+Q|表記|-|約束[やくそく]を守[まも]るのは【とうぜん】のことだ。|当然／盗然／倒然／等然|とうぜん＝当然：當然。其他選項是讀音相同的錯字。|v:当然
+Q|表記|-|【しっぱい】を恐[おそ]れないでください。|失敗／失背／失配／失杯|しっぱい＝失敗：失敗。其他選項是讀音相同的錯字。|v:失敗
+Q|表記|-|このスープはとても【あつい】ので、気[き]をつけて飲[の]んでください。|熱い／暑い／厚い／圧い|あつい：熱い＝（東西）燙；暑い＝（天氣）熱；厚い＝厚。湯是燙的 → 熱い。|v:熱い
+Q|表記|-|先生[せんせい]に【しつもん】があるので、授業[じゅぎょう]のあとで研究[けんきゅう]室[しつ]に行[い]きます。|質問／質門／室問／失問|しつもん＝質問（提問）。「問」是問題的問，不是「門」。|v:質問
+Q|文脈規定|-|毎日[まいにち]練習[れんしゅう]を（　　）結果[けっか]、試合[しあい]に勝[か]つことができた。|続[つづ]けた／止[と]めた／比[くら]べた／集[あつ]めた|練習を続ける＝持續練習。結果＝結果。|v:続ける
+Q|文脈規定|-|この道[みち]は車[くるま]が多[おお]いので、子[こ]どもが一人[ひとり]で歩[ある]くのは（　　）です。|危険[きけん]／安心[あんしん]／丁寧[ていねい]／便利[べんり]|危険（きけん）：危險。車很多 → 小孩一個人走很危險。|v:危険
+Q|文脈規定|-|夏休[なつやす]みの旅行[りょこう]の（　　）を立[た]てるのは楽[たの]しい。|計画[けいかく]／意見[いけん]／経験[けいけん]／番組[ばんぐみ]|計画を立てる：訂計畫。其他詞不和「立てる」搭配。|v:計画
+Q|文脈規定|-|彼女[かのじょ]はいつも（　　）笑[わら]っていて、みんなを元気[げんき]にしてくれる。|にこにこ／いらいら／どきどき／ぺらぺら|にこにこ：笑瞇瞇。いらいら＝焦躁；どきどき＝心跳；ぺらぺら＝流利。|v:にこにこ
+Q|文脈規定|-|会議[かいぎ]の時間[じかん]が三[さん]時[じ]から四[よ]時[じ]に（　　）されました。|変更[へんこう]／交換[こうかん]／交代[こうたい]／返事[へんじ]|変更（へんこう）：變更。交換＝交換；交代＝輪替。|v:変更
+Q|文脈規定|-|急[いそ]いでいたので、財布[さいふ]を家[いえ]に（　　）きてしまった。|忘[わす]れて／落[お]として／探[さが]して／入[い]れて|～を家に忘れてくる：把…忘在家裡。|v:忘れる
+Q|文脈規定|-|雨[あめ]で試合[しあい]が（　　）になったので、家[いえ]で映画[えいが]を見[み]た。|中止[ちゅうし]／中心[ちゅうしん]／中身[なかみ]／中央[ちゅうおう]|中止（ちゅうし）：取消。中心＝中心；中身＝內容物；中央＝中央。|v:中止
+Q|文脈規定|-|引[ひ]っ越[こ]しの荷物[にもつ]を段[だん]ボール箱[ばこ]に（　　）。|詰[つ]めた／積[つ]もった／並[なら]んだ／混[こ]んだ|詰める（つめる）：裝進、塞滿（他動詞）。積もる＝（雪）堆積；並ぶ、混む 是自動詞。|v:詰める
+Q|文脈規定|-|電車[でんしゃ]の中[なか]で大[おお]きい声[こえ]で話[はな]すのは、ほかの人[ひと]の（　　）になります。|迷惑[めいわく]／退屈[たいくつ]／正直[しょうじき]／自由[じゆう]|迷惑（めいわく）になる：造成困擾。|v:迷惑
+Q|文脈規定|-|試験[しけん]の前[まえ]の日[ひ]は、（　　）寝[ね]たほうがいいですよ。|ぐっすり／がっかり／うっかり／そっくり|ぐっすり寝る：睡得很熟。がっかり＝失望；うっかり＝不小心；そっくり＝一模一樣。|v:ぐっすり
+Q|文脈規定|-|暑[あつ]いので、エアコンの（　　）を入[い]れてください。|スイッチ／カーテン／ポケット／ハンドル|スイッチを入れる：打開開關。|v:スイッチ
+Q|言い換え類義|-|来週[らいしゅう]の会議[かいぎ]は【延期[えんき]】になりました。|後[あと]の日[ひ]に変[か]わりました／中止[ちゅうし]になりました／早[はや]くなりました／場所[ばしょ]が変[か]わりました|延期（えんき）：延期＝改到之後的日子。中止是取消。|v:延期
+Q|言い換え類義|-|今日[きょう]は一日中[いちにちじゅう]歩[ある]いたので、【くたくた】です。|とても疲[つか]れています／とても眠[ねむ]いです／おなかがすいています／とても忙[いそが]しいです|くたくた：累得筋疲力盡。|v:くたくた
+Q|言い換え類義|-|田中[たなか]さんは【たしか】来月[らいげつ]結婚[けっこん]するはずです。|私[わたし]の記憶[きおく]が正[ただ]しければ／必[かなら]ず／もうすぐ／やっと|たしか（副詞）：記得好像是…（不太確定的記憶）。|v:確か
+Q|言い換え類義|-|この仕事[しごと]は毎日[まいにち]同[おな]じことばかりで、【退屈[たいくつ]】だ。|つまらない／むずかしい／いそがしい／あぶない|退屈（たいくつ）：無聊＝つまらない。|v:退屈
+Q|言い換え類義|-|メールを送[おく]ったら、彼[かれ]は【さっそく】返事[へんじ]をくれた。|すぐに／やっと／ていねいに／ゆっくり|さっそく：立刻、馬上＝すぐに。|v:早速
+Q|用法|-|夢中[むちゅう]|子[こ]どもたちはゲームに夢中[むちゅう]で、呼[よ]んでも返事[へんじ]をしない。／毎朝[まいあさ]、夢中[むちゅう]に起[お]きて会社[かいしゃ]へ行[い]く。／この料理[りょうり]は夢中[むちゅう]においしい。／夢中[むちゅう]な天気[てんき]なので、出[で]かけましょう。|夢中（むちゅう）：熱衷、入迷，用「～に夢中だ／夢中になる」。其他句子用法錯誤。|v:夢中
+Q|用法|-|片付[かたづ]ける|遊[あそ]んだあとは、おもちゃを片付[かたづ]けなさい。／毎日[まいにち]寝[ね]る前[まえ]に、日記[にっき]を片付[かたづ]けている。／友達[ともだち]と駅[えき]で片付[かたづ]けました。／雨[あめ]が片付[かたづ]けたので、出[で]かけた。|片付ける（かたづける）：收拾、整理。寫日記是「つける」；雨停是「やむ」。|v:片付ける
+Q|用法|-|似合[にあ]う|その赤[あか]いセーター、よく似合[にあ]っていますね。／この答[こた]えは問題[もんだい]に似合[にあ]っていない。／日本[にほん]の生活[せいかつ]にやっと似合[にあ]ってきた。／父[ちち]と私[わたし]は顔[かお]がよく似合[にあ]っている。|似合う（にあう）：（衣服等）適合某人。習慣是「慣れる」；長得像是「似ている」。|v:似合う
+Q|用法|-|間[ま]に合[あ]う|急[いそ]げば、九[く]時[じ]の電車[でんしゃ]に間[ま]に合[あ]いますよ。／この靴[くつ]はサイズが間[ま]に合[あ]わない。／友達[ともだち]と駅[えき]で間[ま]に合[あ]った。／料理[りょうり]の味[あじ]が少[すこ]し間[ま]に合[あ]っていない。|間に合う（まにあう）：來得及、趕上。尺寸合不合是「合う」；和朋友見面是「会う」。|v:間に合う
+Q|用法|-|さっぱり|お風呂[ふろ]に入[はい]って、さっぱりした。／彼[かれ]の説明[せつめい]はさっぱりで、よく分[わ]かった。／さっぱり雨[あめ]が降[ふ]ってきた。／さっぱり料理[りょうり]を食[た]べすぎてしまった。|さっぱり：清爽、舒暢；或「さっぱり分からない」＝完全不懂。第二句「さっぱりで…よく分かった」矛盾。|v:さっぱり
+Q|文法形式|-|日本[にほん]に来[き]た（　　）は、日本語[にほんご]が全然[ぜんぜん]話[はな]せなかった。|ばかりのころ／ところで／うちに／あいだに|た形＋ばかり：剛…不久。「来たばかりのころ」＝剛來的時候。|g:～たばかり
+Q|文法形式|-|父[ちち]は健康[けんこう]の（　　）、毎朝[まいあさ]ジョギングをしている。|ために／ように／せいで／ところに|名詞＋のために：為了…（目的）。「健康のように」不成立。|g:～ために
+Q|文法形式|-|空[そら]が暗[くら]くなってきた。雨[あめ]が降[ふ]り（　　）だから、洗濯物[せんたくもの]を中[なか]に入[い]れよう。|そう／らしい／よう／みたい|ます形＋そうだ：看起來快要…（樣態）。らしい・ようだ・みたいだ 不接ます形。|g:～そうだ（樣態）
+Q|文法形式|-|この本[ほん]は難[むずか]しすぎて、何[なん]度[ど]読[よ]んで（　　）、よく分[わ]からない。|も／ては／から／ので|何度～ても：不管…幾次都…。|g:～ても
+Q|文法形式|-|先生[せんせい]の説明[せつめい]を聞[き]いて、やっと意味[いみ]が分[わ]かる（　　）。|ようになった／ことになった／ようにした／ことにした|辭書形＋ようになる：（能力、狀態）變得能…。|g:～ようになる
+Q|文法形式|-|弟[おとうと]は自分[じぶん]では何[なに]もしない（　　）、文句[もんく]ばかり言[い]っている。|くせに／ために／おかげで／とおりに|～くせに：明明…卻…（帶不滿）。|g:～くせに
+Q|文法形式|-|部長[ぶちょう]、その資料[しりょう]は私[わたし]が会議[かいぎ]室[しつ]まで（　　）。|お持[も]ちします／お持[も]ちになります／持[も]っていらっしゃいます／お持[も]ちください|說自己的動作要用謙讓語「お＋ます形＋する」。お持ちになる 是尊敬語。|g:お～する（敬語・謙讓）
+Q|文法形式|-|明日[あした]は大事[だいじ]な試験[しけん]だから、今夜[こんや]はゲームをする（　　）。|わけにはいかない／ものだった／ばかりでなく／ついでに|～わけにはいかない：（考慮情況）不能…。|g:～わけにはいかない
+Q|文法形式|-|駅[えき]に（　　）とたん、雨[あめ]が降[ふ]り出[だ]した。|着[つ]いた／着[つ]く／着[つ]いて／着[つ]こう|た形＋とたん（に）：剛一…就…。|g:～たとたん（に）
+Q|文法形式|-|窓[まど]を開[あ]けた（　　）寝[ね]てしまって、風邪[かぜ]をひいた。|まま／ながら／ずつ／ほど|た形＋まま：保持…的狀態（開著窗就睡著了）。|g:～まま
+Q|文法形式|-|子[こ]どもに野菜[やさい]を食[た]べ（　　）のは、なかなか大変[たいへん]だ。|させる／ている／たがる／やすい|使役「食べさせる」：讓（小孩）吃。「子どもに」是使役的對象。|g:～させてください
+Q|文法形式|-|天気[てんき]予報[よほう]に（　　）、明日[あした]は大雪[おおゆき]になるそうだ。|よると／ついて／対[たい]して／とって|～によると…そうだ：根據…聽說…（消息來源）。|g:～によると
+Q|文法形式|-|留学[りゅうがく]する（　　）、もっと英語[えいご]を勉強[べんきょう]しておけばよかった。|なら／ても／とおり／ばかりか|～なら：如果要…的話（以對方或自己的打算為前提）。|g:～なら
+Q|文の組み立て|-|あの店[みせ]のケーキは ＿＿ ＿＿ ★ ＿＿ 人[ひと]が並[なら]んでいる。|有名[ゆうめい]で／おいしい／と／いつも|正確順序：おいしい／と／有名で／いつも（★=有名で）。那家店的蛋糕以好吃聞名，總是有人排隊。|
+Q|文の組み立て|-|この仕事[しごと]は ＿＿ ＿＿ ★ ＿＿ 終[お]わらないだろう。|今日中[きょうじゅう]に／三[さん]人[にん]で／やっても／は|正確順序：三人で／やっても／今日中に／は（★=今日中に）。這個工作就算三個人做，今天之內也做不完吧。|g:～ても
+Q|文の組み立て|-|母[はは]に ＿＿ ★ ＿＿ ＿＿、まだ書[か]いていない。|書[か]く／手紙[てがみ]を／と／約束[やくそく]したのに|正確順序：手紙を／書く／と／約束したのに（★=書く）。明明和媽媽約好要寫信，卻還沒寫。|g:～のに
+Q|文の組み立て|-|駅[えき]に ＿＿ ＿＿ ＿＿ ★ ください。|して／着[つ]いたら／すぐに／電話[でんわ]を|正確順序：着いたら／すぐに／電話を／して（★=して）。到了車站請馬上打電話。|
+Q|文の組み立て|-|彼[かれ]は ＿＿ ★ ＿＿ ＿＿ 顔[かお]をしている。|何[なに]も／まるで／知[し]らない／という|正確順序：まるで／何も／知らない／という（★=何も）。他一副好像什麼都不知道的表情。|
+Q|文章の文法|g1|（1）|だけでなく／だけしか／しか／さえ|食べ物や飲み物だけでなく、コピーも…：不只是…還…。|g:～だけでなく
+Q|文章の文法|g1|（2）|必要[ひつよう]な／必要[ひつよう]だ／必要[ひつよう]で／必要[ひつよう]に|「～のか」前面接名詞・な形容詞時用「な」：必要なのか。|
+Q|文章の文法|g1|（3）|できます／できません／できるでしょうか／できたらいいです|前文說「とても便利です」→ 打工到很晚也「買得到」便當。|
+Q|文章の文法|g1|（4）|それに／しかし／だから／つまり|それに：而且（再補充一個優點）。|
+Q|文章の文法|g1|（5）|います／おきます／みます／あげます|「答えています」：現在習慣這樣回答（～ている 表示習慣）。|
+Q|内容理解（短文）|r1|山田[やまだ]さんがしなければならないことは何[なに]か。|資料[しりょう]を三[さん]十[じゅう]部[ぶ]コピーして、プロジェクターを確認[かくにん]する／資料[しりょう]を二[に]十[じゅう]部[ぶ]コピーして、会議[かいぎ]室[しつ]を予約[よやく]する／資料[しりょう]を三[さん]十[じゅう]部[ぶ]コピーして、新[あたら]しいプロジェクターを買[か]う／会議[かいぎ]室[しつ]をC室[しつ]に変[か]えて、資料[しりょう]を確認[かくにん]する|要印三十份，並在使用前先確認C室的投影機。會議室已經改好了，不用山田去改。|
+Q|内容理解（短文）|r2|学生[がくせい]が駐輪場[ちゅうりんじょう]を使[つか]うためにしなければならないことは何[なに]か。|学生[がくせい]証[しょう]などを持[も]って市役所[しやくしょ]で登録[とうろく]し、六[ろく]百[ひゃく]円[えん]払[はら]う／駅前[えきまえ]の駐輪場[ちゅうりんじょう]で千[せん]二[に]百[ひゃく]円[えん]払[はら]う／市役所[しやくしょ]に電話[でんわ]して、学生[がくせい]証[しょう]の番号[ばんごう]を言[い]う／登録[とうろく]しないで、毎回[まいかい]六[ろく]百[ひゃく]円[えん]払[はら]う|學生要帶學生證和能證明住址的東西去市公所登記，費用六百日圓。|
+Q|内容理解（短文）|r3|筆者[ひっしゃ]が「不思議[ふしぎ]なものだ」と思[おも]ったのはどんなことか。|名前[なまえ]も知[し]らない人[ひと]のことが一[いち]日[にち]中気[ちゅうき]になったこと／毎朝[まいあさ]同[おな]じ時間[じかん]の電車[でんしゃ]に乗[の]っていること／女性[じょせい]がいつも本[ほん]を読[よ]んでいること／友達[ともだち]が電車[でんしゃ]に乗[の]ってこなかったこと|連名字都不知道的人，只是一天沒出現，自己卻整天掛念 → 覺得不可思議。|
+Q|内容理解（短文）|r4|田中[たなか]さんがカップを待[ま]たないことにした場合[ばあい]、どうすればいいか。|今月[こんげつ]末[まつ]までに、このメールに返事[へんじ]をする／来月[らいげつ]十日[とおか]までに、店[みせ]に電話[でんわ]をする／何[なに]もしないで、カップが届[とど]くのを待[ま]つ／店[みせ]に行[い]って、ほかのカップを選[えら]ぶ|要取消的話，本月底前回覆這封郵件。|
+Q|内容理解（中文）|m1|①自分[じぶん]で料理[りょうり]をしてみることにしたのはなぜか。|健康[けんこう]診断[しんだん]で野菜[やさい]が足[た]りないと言[い]われたから／コンビニのお弁当[べんとう]が高[たか]くなったから／友達[ともだち]に料理[りょうり]を作[つく]ってほしいと頼[たの]まれたから／一人暮[ひとりぐ]らしを始[はじ]めたから|健康檢查時被說「蔬菜吃得不夠」→ 決定自己做菜。開始一個人住之後還是都吃外食。|
+Q|内容理解（中文）|m1|②「お金[かね]があまりかからない」とあるが、どういうことか。|外食[がいしょく]ばかりしていたころより、食費[しょくひ]が少[すく]なくなった／野菜[やさい]の値段[ねだん]が半分[はんぶん]になった／友達[ともだち]が食事[しょくじ]代[だい]を払[はら]ってくれる／料理[りょうり]の道具[どうぐ]が安[やす]く買[か]えた|和以前比，伙食費變成一半左右。|
+Q|内容理解（中文）|m1|筆者[ひっしゃ]が料理[りょうり]についていちばん言[い]いたいことは何[なに]か。|健康[けんこう]によいだけでなく、人[ひと]とのつながりも作[つく]ってくれる／自分[じぶん]で作[つく]るとおいしくないが、お金[かね]はかからない／料理[りょうり]は時間[じかん]がかかるので、週末[しゅうまつ]だけするのがいい／三十歳[さんじゅっさい]までに料理[りょうり]を習[なら]ったほうがいい|最後一句是主旨：料理不只為了健康，也能建立與人的連結。|
+Q|内容理解（中文）|m2|①「実際[じっさい]に始[はじ]めてみると」とあるが、どうなったか。|午後[ごご]の仕事[しごと]でミスが少[すく]なくなった／昼休[ひるやす]みが長[なが]くなった／みんなが仕事[しごと]中[ちゅう]に寝[ね]るようになった／夜[よる]よく眠[ねむ]れるようになった|「午後のミスが減った」＝下午的失誤變少了。|
+Q|内容理解（中文）|m2|②昼寝[ひるね]は二十分[にじゅっぷん]ぐらいまでにするのがいいのはなぜか。|長[なが]く寝[ね]ると、起[お]きたあと頭[あたま]がはっきりしないから／二十分[にじゅっぷん]以上[いじょう]寝[ね]られる部屋[へや]がないから／昼休[ひるやす]みが十五分[じゅうごふん]しかないから／短[みじか]く寝[ね]ると、夜[よる]早[はや]く眠[ねむ]くなるから|睡超過三十分鐘會進入深層睡眠，醒來反而頭昏，晚上也可能睡不著。|
+Q|内容理解（中文）|m2|この文章[ぶんしょう]の内容[ないよう]と合[あ]っているものはどれか。|昼[ひる]ご飯[はん]のあとに眠[ねむ]くなるのは自然[しぜん]なことだ／昼寝[ひるね]は長[なが]ければ長[なが]いほどいい／どの会社[かいしゃ]にも昼寝[ひるね]の部屋[へや]がある／昼寝[ひるね]をすると夜[よる]よく眠[ねむ]れる|第一段：飯後想睡是很自然的。其他選項與文章相反或沒提到。|
+Q|内容理解（長文）|L1|①「もうやりたくない」と思[おも]ったのはなぜか。|朝[あさ]から夜[よる]まで外[そと]で働[はたら]いて、とても疲[つか]れたから／町内[ちょうない]会[かい]の人[ひと]と仲[なか]が悪[わる]かったから／道[みち]に迷[まよ]った人[ひと]を案内[あんない]できなかったから／ごみが多[おお]くて、会場[かいじょう]が汚[きたな]かったから|「朝から夜まで外にいたので、とても疲れた」。|
+Q|内容理解（長文）|L1|②もう一度[いちど]やってみようという気持[きも]ちになったのはなぜか。|前[まえ]の年[とし]に助[たす]けた人[ひと]がお礼[れい]を言[い]いに来[き]たと聞[き]いたから／町内[ちょうない]会[かい]の人[ひと]に何[なん]度[ど]も頼[たの]まれたから／孫[まご]と一緒[いっしょ]にお祭[まつ]りに行[い]きたかったから／仕事[しごと]に慣[な]れて、余裕[よゆう]が出[で]てきたから|聽說前一年幫過的老奶奶來道謝。習慣工作是第二年以後的事。|
+Q|内容理解（長文）|L1|筆者[ひっしゃ]は今年[ことし]、どんなことをしたか。|若[わか]い人[ひと]たちにボランティアの仕事[しごと]を教[おし]えた／迷子[まいご]の子[こ]どもを一人[ひとり]で探[さが]した／初[はじ]めてごみを集[あつ]める仕事[しごと]をした／町内[ちょうない]会[かい]の人[ひと]をボランティアに誘[さそ]った|「今年は、若い人たちにボランティアの仕事を教える係もした」。|
+Q|内容理解（長文）|L1|③「自分[じぶん]のほうがたくさんのものをもらっている」とはどういうことか。|ボランティアをすることで、筆者[ひっしゃ]自身[じしん]がうれしい気持[きも]ちになれる／ボランティアをすると、お金[かね]やプレゼントがもらえる／お祭[まつ]りに来[き]た人[ひと]から、たくさんの物[もの]をもらった／町内[ちょうない]会[かい]から、お礼[れい]の手紙[てがみ]をもらった|「もらっている」指的是笑容、感謝帶來的喜悅，不是實際的東西。|
+Q|情報検索|i1|会社[かいしゃ]員[いん]のリンさんは、平日[へいじつ]の夜[よる]に何[なん]回[かい]か続[つづ]けて料理[りょうり]を習[なら]いたい。仕事[しごと]は毎日[まいにち]18時半[じはん]に終[お]わり、センターまで20分[ふん]かかる。リンさんが参加[さんか]できるのはどれか。|③30分[ふん]でできる夕[ゆう]ご飯[はん]／①和食[わしょく]の基本[きほん]／②親子[おやこ]でパン作[づく]り／④世界[せかい]のお菓子[かし]|18:30下班＋20分鐘＝18:50到。①18:00開始來不及；②④是週六且只有一次；③週三19:00開始、共4次。|
+Q|情報検索|i1|小学生[しょうがくせい]の子[こ]どもと一緒[いっしょ]にパン作[づく]りに参加[さんか]したい。どうすればいいか。|7月[がつ]10日までに受付[うけつけ]か電話[でんわ]で申[もう]し込[こ]み、2,500円[えん]払[はら]う／7月[がつ]20日に直接[ちょくせつ]センターへ行[い]って、2,500円[えん]払[はら]う／7月[がつ]10日までに申[もう]し込[こ]み、材料[ざいりょう]費[ひ]を別[べつ]に払[はら]う／7月[がつ]27日までに電話[でんわ]で申[もう]し込[こ]む|7月10日前在櫃台或電話報名；材料費已含在費用內；名額先報先贏。|
+L|課題理解|男[おとこ]の人[ひと]はこのあとまず何[なに]をしますか。|女[おんな]：山田[やまだ]さん、来週[らいしゅう]の出張[しゅっちょう]のホテル、もう予約[よやく]した？＃男[おとこ]：いえ、まだです。今日[きょう]の午後[ごご]にしようと思[おも]っていました。＃女[おんな]：その前[まえ]に、新幹線[しんかんせん]の切符[きっぷ]を取[と]っておいてくれる？週末[しゅうまつ]は混[こ]むから。＃男[おとこ]：分[わ]かりました。じゃ、切符[きっぷ]を取[と]ってから、ホテルを予約[よやく]します。＃女[おんな]：あ、ホテルは私[わたし]が会社[かいしゃ]の近[ちか]くのところを予約[よやく]しておくから、大丈夫[だいじょうぶ]よ。|新幹線[しんかんせん]の切符[きっぷ]を取[と]る／ホテルを予約[よやく]する／出張[しゅっちょう]の資料[しりょう]を作[つく]る／会社[かいしゃ]の近[ちか]くのホテルを探[さが]す|女的說飯店她會訂，男的只要先買新幹線車票。|
+L|課題理解|女[おんな]の学生[がくせい]は明日[あした]、何[なに]を持[も]って行[い]きますか。|女[おんな]：先生[せんせい]、明日[あした]の美術館[びじゅつかん]の見学[けんがく]ですが、お弁当[べんとう]は要[い]りますか。＃男[おとこ]：いえ、お昼[ひる]は美術館[びじゅつかん]のレストランでみんなで食[た]べますから、要[い]りません。＃女[おんな]：じゃ、お金[かね]を持[も]って行[い]けばいいですか。＃男[おとこ]：食事[しょくじ]代[だい]は学校[がっこう]が払[はら]います。ただ、入[はい]るときに学生[がくせい]証[しょう]を見[み]せますから、それは忘[わす]れないでください。＃女[おんな]：はい。ノートとペンは？＃男[おとこ]：ノートは美術館[びじゅつかん]でもらえますから、ペンだけでいいですよ。|学生[がくせい]証[しょう]とペン／お弁当[べんとう]とお金[かね]／学生[がくせい]証[しょう]とノート／お金[かね]とペン|不用便當和錢；要帶學生證；筆記本美術館會給，只帶筆。|
+L|課題理解|二人[ふたり]は何[なん]時[じ]に家[いえ]を出[で]ますか。|女[おんな]：明日[あした]、空港[くうこう]まで車[くるま]で送[おく]ってくれる？飛行機[ひこうき]は十[じゅう]時[じ]なの。＃男[おとこ]：いいよ。一[いち]時間[じかん]前[まえ]に空港[くうこう]に着[つ]けばいい？＃女[おんな]：国際線[こくさいせん]だから、二[に]時間[じかん]前[まえ]には着[つ]きたいな。＃男[おとこ]：じゃあ、八[はち]時[じ]に着[つ]けばいいね。家[いえ]から空港[くうこう]まで一[いち]時間[じかん]ぐらいだから、七[しち]時[じ]に出[で]よう。＃女[おんな]：朝[あさ]は道[みち]が混[こ]むから、もう三十分[さんじゅっぷん]早[はや]く出[で]よう。|六[ろく]時半[じはん]／七[しち]時[じ]／七[しち]時半[じはん]／八[はち]時[じ]|八點到機場、車程一小時 → 七點出門，再提早三十分鐘 → 六點半。|
+L|課題理解|店[みせ]の人[ひと]はこのあと何[なに]をしますか。|男[おとこ]：すみません、この荷物[にもつ]を送[おく]りたいんですが。＃女[おんな]：はい。こちらの紙[かみ]に、送[おく]り先[さき]の住所[じゅうしょ]とお名前[なまえ]を書[か]いてください。＃男[おとこ]：はい。…書[か]きました。＃女[おんな]：ありがとうございます。中身[なかみ]は何[なん]ですか。＃男[おとこ]：本[ほん]です。＃女[おんな]：では、重[おも]さを量[はか]りますので、荷物[にもつ]をこちらに置[お]いてください。|荷物[にもつ]の重[おも]さを量[はか]る／送[おく]り先[さき]の住所[じゅうしょ]を書[か]く／荷物[にもつ]の中身[なかみ]を聞[き]く／お金[かね]を受[う]け取[と]る|住址已寫好、內容物也問過了，接下來店員要秤重量。|
+L|課題理解|男[おとこ]の学生[がくせい]はこれからどうしますか。|女[おんな]：鈴木[すずき]くん、レポート、もう出[だ]した？締[し]め切[き]り、今日[きょう]の五[ご]時[じ]だよ。＃男[おとこ]：え、明日[あした]だと思[おも]ってた。まだ半分[はんぶん]しか書[か]いてないよ。＃女[おんな]：先生[せんせい]にメールして、少[すこ]し待[ま]ってもらったら？＃男[おとこ]：うーん、先生[せんせい]は締[し]め切[き]りに厳[きび]しいからなあ。今[いま]から図書館[としょかん]で書[か]いて、五[ご]時[じ]までに出[だ]すよ。＃女[おんな]：がんばって。|図書館[としょかん]でレポートを書[か]いて、五[ご]時[じ]までに出[だ]す／先生[せんせい]にメールして、締[し]め切[き]りを延[の]ばしてもらう／明日[あした]レポートを出[だ]す／半分[はんぶん]だけ書[か]いたレポートを出[だ]す|老師對截止日很嚴格，所以他決定現在去圖書館寫、五點前交。|
+L|課題理解|女[おんな]の人[ひと]はどの電車[でんしゃ]に乗[の]りますか。|女[おんな]：すみません、桜[さくら]駅[えき]へ行[い]きたいんですが、この電車[でんしゃ]は止[と]まりますか。＃男[おとこ]：これは急行[きゅうこう]なので、桜[さくら]駅[えき]には止[と]まりません。次[つぎ]の各駅[かくえき]停車[ていしゃ]に乗[の]ってください。＃女[おんな]：次[つぎ]の各駅[かくえき]停車[ていしゃ]は何[なん]時[じ]ですか。＃男[おとこ]：十[じゅう]時[じ]十五分[じゅうごふん]です。でも、十[じゅう]時[じ]五分[ごふん]の快速[かいそく]に乗[の]って、二[ふた]つ目[め]の駅[えき]で乗[の]り換[か]えたほうが早[はや]く着[つ]きますよ。＃女[おんな]：乗[の]り換[か]えはちょっと…。荷物[にもつ]が多[おお]いので、乗[の]り換[か]えないで行[い]きます。|十[じゅう]時[じ]十五分[じゅうごふん]の各駅[かくえき]停車[ていしゃ]／十[じゅう]時[じ]五分[ごふん]の快速[かいそく]／今[いま]来[き]ている急行[きゅうこう]／快速[かいそく]に乗[の]って、二[ふた]つ目[め]の駅[えき]で乗[の]り換[か]える|行李多不想轉車 → 搭十點十五分的各站停車。|
+L|ポイント理解|女[おんな]の人[ひと]はどうして引[ひ]っ越[こ]しますか。|男[おとこ]：引[ひ]っ越[こ]すんだって？今[いま]のアパート、駅[えき]から近[ちか]くて便利[べんり]なのに。＃女[おんな]：うん。便利[べんり]なんだけど、隣[となり]の部屋[へや]の人[ひと]が夜[よる]遅[おそ]くまでうるさくて。＃男[おとこ]：それは大変[たいへん]だね。家賃[やちん]は？＃女[おんな]：家賃[やちん]は今[いま]と同[おな]じぐらい。駅[えき]からはちょっと遠[とお]くなるけど、静[しず]かなところがいいから。|隣[となり]の部屋[へや]がうるさいから／家賃[やちん]が高[たか]いから／駅[えき]から遠[とお]いから／部屋[へや]が狭[せま]いから|隔壁的人到深夜都很吵。房租差不多；新家反而離車站比較遠。|
+L|ポイント理解|男[おとこ]の人[ひと]は、映画[えいが]のどこがいちばんよかったと言[い]っていますか。|女[おんな]：昨日[きのう]の映画[えいが]、どうだった？＃男[おとこ]：よかったよ。音楽[おんがく]もきれいだったし。＃女[おんな]：主人公[しゅじんこう]の俳優[はいゆう]、人気[にんき]があるよね。＃男[おとこ]：うん、でも僕[ぼく]は、最後[さいご]に家族[かぞく]が会[あ]う場面[ばめん]がいちばんよかったな。思[おも]わず泣[な]いちゃったよ。|最後[さいご]に家族[かぞく]が会[あ]う場面[ばめん]／音楽[おんがく]／主人公[しゅじんこう]の俳優[はいゆう]／映画[えいが]の景色[けしき]|「いちばんよかった」的是最後家人重逢的場面。|
+L|ポイント理解|女[おんな]の人[ひと]はどうして遅[おく]れて来[き]ましたか。|男[おとこ]：おはよう。遅[おそ]かったね。寝坊[ねぼう]？＃女[おんな]：ううん、早[はや]く起[お]きたんだけど、出[で]かける前[まえ]に母[はは]から電話[でんわ]があって。＃男[おとこ]：何[なに]かあったの？＃女[おんな]：ううん、大[たい]したことじゃないの。週末[しゅうまつ]に帰[かえ]ってくるかって聞[き]かれただけ。でも、話[はなし]が長[なが]くて…。|母親[ははおや]と電話[でんわ]で話[はな]していたから／寝坊[ねぼう]したから／電車[でんしゃ]が遅[おく]れたから／週末[しゅうまつ]に実家[じっか]に帰[かえ]っていたから|不是睡過頭，是出門前媽媽打電話來，聊太久。|
+L|ポイント理解|男[おとこ]の人[ひと]は何[なに]がいちばん大変[たいへん]だと言[い]っていますか。|女[おんな]：新[あたら]しい仕事[しごと]はどう？＃男[おとこ]：うん、仕事[しごと]の内容[ないよう]はおもしろいよ。会社[かいしゃ]の人[ひと]もみんな親切[しんせつ]だし。＃女[おんな]：通勤[つうきん]は？遠[とお]くなったんでしょう？＃男[おとこ]：一[いち]時間[じかん]半[はん]かかるけど、電車[でんしゃ]で座[すわ]れるから、本[ほん]を読[よ]んでるよ。それより、毎日[まいにち]英語[えいご]でメールを書[か]かなきゃいけないのが大変[たいへん]なんだ。|英語[えいご]でメールを書[か]くこと／通勤[つうきん]に時間[じかん]がかかること／仕事[しごと]の内容[ないよう]が難[むずか]しいこと／会社[かいしゃ]の人[ひと]と話[はな]すこと|「それより…英語でメールを書かなきゃいけないのが大変」。|
+L|ポイント理解|女[おんな]の人[ひと]が旅行[りょこう]でいちばん楽[たの]しかったことは何[なん]ですか。|男[おとこ]：北海道[ほっかいどう]旅行[りょこう]、どうだった？＃女[おんな]：最高[さいこう]だったよ。料理[りょうり]もおいしかったし。＃男[おとこ]：何[なに]を食[た]べたの？＃女[おんな]：お寿司[すし]とラーメン。でもね、いちばん楽[たの]しかったのは、牧場[ぼくじょう]で馬[うま]に乗[の]ったことかな。初[はじ]めてだったから。＃男[おとこ]：へえ、いいなあ。|牧場[ぼくじょう]で馬[うま]に乗[の]ったこと／お寿司[すし]を食[た]べたこと／ラーメンを食[た]べたこと／温泉[おんせん]に入[はい]ったこと|「いちばん楽しかったのは、牧場で馬に乗ったこと」。|
+L|ポイント理解|男[おとこ]の人[ひと]はどうしてスポーツクラブをやめましたか。|女[おんな]：スポーツクラブ、やめたって本当[ほんとう]？＃男[おとこ]：うん。料金[りょうきん]は安[やす]かったし、トレーニングの先生[せんせい]もよかったんだけど。＃女[おんな]：じゃあ、どうして？＃男[おとこ]：会社[かいしゃ]の場所[ばしょ]が変[か]わって、行[い]くのに時間[じかん]がかかるようになったんだ。それで、今[いま]は家[いえ]の近[ちか]くを走[はし]ってる。|会社[かいしゃ]の場所[ばしょ]が変[か]わって、通[かよ]うのに時間[じかん]がかかるから／料金[りょうきん]が高[たか]いから／トレーニングの先生[せんせい]がよくないから／走[はし]るほうが好[す]きだから|公司搬了，去健身房變得很花時間。|
+L|概要理解|先生[せんせい]は何[なに]について話[はな]していますか。|男[おとこ]：皆[みな]さん、来週[らいしゅう]から図書館[としょかん]の使[つか]い方[かた]が少[すこ]し変[か]わります。今[いま]までは本[ほん]を二[に]週間[しゅうかん]借[か]りることができましたが、来週[らいしゅう]からは三[さん]週間[しゅうかん]借[か]りられるようになります。その代[か]わり、一[いち]度[ど]に借[か]りられる本[ほん]は十冊[じゅっさつ]から五[ご]冊[さつ]になります。また、雑誌[ざっし]は図書館[としょかん]の中[なか]でしか読[よ]めなくなります。分[わ]からないことがあったら、カウンターで聞[き]いてください。|図書館[としょかん]のルールが変[か]わること／新[あたら]しい図書館[としょかん]ができること／本[ほん]を返[かえ]す日[ひ]を忘[わす]れないこと／雑誌[ざっし]の読[よ]み方[かた]|整段在說圖書館借書規則的改變（借期、冊數、雜誌）。|
+L|概要理解|女[おんな]の人[ひと]は、新[あたら]しいレストランについてどう思[おも]っていますか。|男[おとこ]：駅前[えきまえ]に新[あたら]しくできたイタリア料理[りょうり]の店[みせ]、行[い]ってみた？＃女[おんな]：うん、先週[せんしゅう]行[い]ったよ。料理[りょうり]はおいしかったし、店[みせ]もきれいだった。でも、ちょっと値段[ねだん]が高[たか]いかな。それに、店員[てんいん]さんが少[すく]なくて、料理[りょうり]が来[く]るまで四十分[よんじゅっぷん]も待[ま]ったの。特別[とくべつ]な日[ひ]にはいいけど、普段[ふだん]はちょっと行[い]けないかな。|料理[りょうり]はいいが、高[たか]くて待[ま]つので、普段[ふだん]は行[い]かない／料理[りょうり]も値段[ねだん]もよくて、毎日[まいにち]でも行[い]きたい／料理[りょうり]がおいしくないので、もう行[い]かない／店員[てんいん]が親切[しんせつ]なので、また行[い]きたい|料理好吃但貴、等很久 → 特別的日子才去，平常不會去。|
+L|概要理解|男[おとこ]の人[ひと]は何[なに]について話[はな]していますか。|男[おとこ]：最近[さいきん]、朝[あさ]ご飯[はん]を食[た]べない若[わか]い人[ひと]が増[ふ]えているそうです。理由[りゆう]を聞[き]くと、「時間[じかん]がない」「食欲[しょくよく]がない」という答[こた]えが多[おお]いようです。しかし、朝[あさ]ご飯[はん]を食[た]べないと、午前[ごぜん]中[ちゅう]に頭[あたま]がよく働[はたら]かず、勉強[べんきょう]や仕事[しごと]の効率[こうりつ]が下[さ]がると言[い]われています。バナナ一本[いっぽん]、牛乳[ぎゅうにゅう]一杯[いっぱい]でもいいので、何[なに]か食[た]べてから出[で]かけることが大切[たいせつ]です。|朝[あさ]ご飯[はん]を食[た]べることの大切[たいせつ]さ／若[わか]い人[ひと]に人気[にんき]の朝[あさ]ご飯[はん]／朝[あさ]早[はや]く起[お]きる方法[ほうほう]／仕事[しごと]が忙[いそが]しい理由[りゆう]|主旨：就算只吃一點，出門前吃早餐很重要。|
+L|発話表現|友達[ともだち]の家[いえ]から帰[かえ]ります。何[なに]と言[い]いますか。|友達[ともだち]の家[いえ]から帰[かえ]ります。何[なに]と言[い]いますか。|そろそろ失礼[しつれい]します。／お邪魔[じゃま]します。／いらっしゃいませ。|離開別人家時說「そろそろ失礼します」。「お邪魔します」是進門時說的。|
+L|発話表現|先生[せんせい]の部屋[へや]に入[はい]ります。何[なに]と言[い]いますか。|先生[せんせい]の部屋[へや]に入[はい]ります。何[なに]と言[い]いますか。|失礼[しつれい]します。／お疲[つか]れさまでした。／いただきます。|進老師的房間說「失礼します」。|
+L|発話表現|店員[てんいん]に、もう少[すこ]し大[おお]きいサイズがあるか聞[き]きたいです。何[なに]と言[い]いますか。|店員[てんいん]に、もう少[すこ]し大[おお]きいサイズがあるか聞[き]きたいです。何[なに]と言[い]いますか。|もう少[すこ]し大[おお]きいのはありますか。／もう少[すこ]し大[おお]きくしてもいいですか。／もう少[すこ]し大[おお]きいのをあげましょうか。|問有沒有更大的尺寸：「もう少し大きいのはありますか」。|
+L|発話表現|友達[ともだち]が重[おも]そうな荷物[にもつ]を持[も]っています。手伝[てつだ]いたいです。何[なに]と言[い]いますか。|友達[ともだち]が重[おも]そうな荷物[にもつ]を持[も]っています。手伝[てつだ]いたいです。何[なに]と言[い]いますか。|一[ひと]つ持[も]とうか。／一[ひと]つ持[も]ってくれない？／一[ひと]つ持[も]ってきたよ。|主動幫忙用「～ようか」：我來拿一個吧？「持ってくれない？」是請對方幫自己拿。|
+L|即時応答|（聽完後作答）|男[おとこ]：この荷物[にもつ]、どこに置[お]けばいい？|あ、その机[つくえ]の上[うえ]にお願[ねが]い。／うん、置[お]いてもいいよ。／荷物[にもつ]は重[おも]かったね。|問「放哪裡好？」→ 回答地點。|
+L|即時応答|（聽完後作答）|女[おんな]：明日[あした]の会議[かいぎ]、何[なん]時[じ]からでしたっけ。|十[じゅう]時[じ]からですよ。／会議[かいぎ]はよかったですね。／明日[あした]は休[やす]みでしたか。|～でしたっけ：（確認記憶）是…來著？→ 回答時間。|
+L|即時応答|（聽完後作答）|男[おとこ]：すみません、ちょっとペンを貸[か]してもらえませんか。|ええ、どうぞ。／はい、貸[か]してもらいました。／いいえ、ペンじゃありません。|借東西 →「ええ、どうぞ」。|
+L|即時応答|（聽完後作答）|女[おんな]：このケーキ、田中[たなか]さんが作[つく]ったんですか。|ええ、初[はじ]めて作[つく]ってみたんです。／ええ、作[つく]ってもらいたいです。／いいえ、食[た]べませんでした。|問是不是自己做的 →「是的，第一次試著做」。|
+L|即時応答|（聽完後作答）|男[おとこ]：もう少[すこ]しゆっくり話[はな]していただけませんか。|あ、すみません。気[き]をつけます。／はい、ゆっくりしてください。／いいえ、話[はな]していません。|被請求說慢一點 → 道歉並注意。「ゆっくりしてください」是「請慢慢休息、別急」。|
+L|即時応答|（聽完後作答）|女[おんな]：週末[しゅうまつ]、どこか行[い]くの？|うん、家族[かぞく]と海[うみ]に行[い]くつもり。／うん、行[い]ってきたよ。／ううん、どこにでも行[い]くよ。|問週末（未來）的計畫 → 用「つもり」回答。|
+L|即時応答|（聽完後作答）|男[おとこ]：あれ、山田[やまだ]さん、今日[きょう]は休[やす]みですか。|ええ、風邪[かぜ]をひいたそうです。／ええ、休[やす]んでください。／いいえ、休[やす]みはありません。|問山田是否請假 → 說明原因「聽說感冒了」。|
+L|即時応答|（聽完後作答）|女[おんな]：この席[せき]、どなたか座[すわ]っていますか。|いえ、空[あ]いていますよ。／ええ、座[すわ]ってもいいですよ。／はい、立[た]っています。|問有沒有人坐 →「沒有，空著」。|
+L|即時応答|（聽完後作答）|男[おとこ]：お茶[ちゃ]とコーヒー、どちらがいいですか。|じゃ、コーヒーをお願[ねが]いします。／はい、どちらもいいです。／お茶[ちゃ]を飲[の]みましたか。|二選一的提問 → 選一個並說「お願いします」。|`;
+/* ===== Round 9：第1回～第10回 完整模考（原創，依 N3 正式題型、題數與時間） ===== */
+type EQ = { cat: string; pid: string; q: string; o: string[]; e: string; tag: string; s?: string };
+type ExamSet = { n: number; ready: boolean; ps: Record<string, string>; qs: EQ[] };
+const EX_SPEC: [string, number, number][] = [
+  ["漢字読み", 8, 0], ["表記", 6, 0], ["文脈規定", 11, 0], ["言い換え類義", 5, 0], ["用法", 5, 0],
+  ["文法形式", 13, 1], ["文の組み立て", 5, 1], ["文章の文法", 5, 1], ["内容理解（短文）", 4, 1], ["内容理解（中文）", 6, 1], ["内容理解（長文）", 4, 1], ["情報検索", 2, 1],
+  ["課題理解", 6, 2], ["ポイント理解", 6, 2], ["概要理解", 3, 2], ["発話表現", 4, 2], ["即時応答", 9, 2],
+];
+const EX_SEC: [string, number][] = [["言語知識（文字・語彙）", 30], ["言語知識（文法）・読解", 70], ["聴解", 40]];
+const READ_CATS = ["内容理解（短文）", "内容理解（中文）", "内容理解（長文）", "情報検索"];
+const EX_INSTR: Record<string, string> = {
+  漢字読み: "【　】的詞怎麼讀？",
+  表記: "【　】的詞用漢字怎麼寫？",
+  文脈規定: "（　　）中放入哪個最合適？",
+  言い換え類義: "選出意思和【　】最接近的選項。",
+  文法形式: "（　　）中放入哪個最合適？",
+  文の組み立て: "把四個選項排成正確的句子，★ 的位置應放入哪一個？",
+  文章の文法: "閱讀上面的文章，選出放進空格最合適的選項。",
+  "内容理解（短文）": "閱讀上面的文章，回答問題。",
+  "内容理解（中文）": "閱讀上面的文章，回答問題。",
+  "内容理解（長文）": "閱讀上面的文章，回答問題。",
+  情報検索: "閱讀上面的資訊，回答問題。",
+  課題理解: "🎧 先看問題，再聽對話。",
+  ポイント理解: "🎧 先看問題，再聽對話，抓住理由或重點。",
+  概要理解: "🎧 聽完整段話，回答問題（掌握說話者的主旨或想法）。",
+  発話表現: "🎧 看情境，選出這時候應該說的話。",
+  即時応答: "🎧 聽對方說的話，選出最適當的回應。（題目文字答完才顯示）",
+};
+const EXAMS: ExamSet[] = [];
+EXAMS_RAW.split("\n").forEach((l: string) => {
+  const f = l.split("|");
+  if (f[0] === "E") EXAMS.push({ n: Number(f[1]), ready: f[2] === "1", ps: {}, qs: [] });
+  const ex = EXAMS[EXAMS.length - 1];
+  if (!ex) return;
+  if (f[0] === "P") ex.ps[f[1] ?? ""] = (f[2] ?? "").replace(/⏎/g, "\n");
+  else if (f[0] === "Q") ex.qs.push({ cat: f[1] ?? "", pid: f[2] === "-" ? "" : f[2] ?? "", q: (f[3] ?? "").replace(/⏎/g, "\n"), o: (f[4] ?? "").split("／"), e: (f[5] ?? "").replace(/⏎/g, "\n"), tag: f[6] ?? "" });
+  else if (f[0] === "L") ex.qs.push({ cat: f[1] ?? "", pid: "", q: (f[2] ?? "").replace(/⏎/g, "\n"), s: f[3] ?? "", o: (f[4] ?? "").split("／"), e: (f[5] ?? "").replace(/⏎/g, "\n"), tag: f[6] ?? "" });
+});
+EXAMS.forEach((x: ExamSet) => {
+  const ord = (c: string) => EX_SPEC.findIndex((s: [string, number, number]) => s[0] === c);
+  x.qs = x.qs.map((q: EQ, i: number): [EQ, number] => [q, i]).sort((a, b) => ord(a[0].cat) - ord(b[0].cat) || a[1] - b[1]).map((x2) => x2[0]);
+});
+function exQ(x: ExamSet, k: number): Q {
+  const q = x.qs[k] as EQ;
+  const listen = q.s !== undefined;
+  const isR = q.cat === "即時応答";
+  const head = q.cat === "用法" ? `下列哪一句「${q.q}」的用法最正確？` : `${EX_INSTR[q.cat] ?? ""}\n${q.q}`;
+  const turns = (q.s ?? "").split("＃");
+  return {
+    id: `exam:${x.n}:${k}`,
+    sec: "mock",
+    cat: q.cat,
+    tags: q.tag ? q.tag.split(",").filter(Boolean) : [],
+    tag: `第${x.n}回・${q.cat}`,
+    prompt: listen ? (isR ? EX_INSTR[q.cat] ?? "" : `${EX_INSTR[q.cat] ?? ""}\n${q.q}`) : head,
+    passage: q.pid ? x.ps[q.pid] : undefined,
+    ja: true,
+    optJa: true,
+    ...mc(q.o[0] ?? "", q.o.slice(1)),
+    exp: q.e,
+    tts: listen ? q.s : undefined,
+    autoPlay: listen,
+    reveal: listen ? turns.join("\n") : undefined,
+    review: listen ? `${q.q}\n${turns.join("\n")}` : q.cat === "用法" ? head : q.pid ? `${q.q}` : q.q,
+  };
+}
+function examSecs(x: ExamSet): ExSec[] {
+  return EX_SEC.map(([name, min]: [string, number], si: number) => ({
+    name,
+    min,
+    items: x.qs.map((q: EQ, k: number): [EQ, number] => [q, k]).filter(([q]) => (EX_SPEC.find((s) => s[0] === q.cat) ?? ["", 0, -1])[2] === si).map(([q, k]) => ({ cat: READ_CATS.includes(q.cat) ? "読解" : q.cat, id: `exam:${x.n}:${k}`, mk: () => exQ(x, k) })),
+  }));
+}
+function ExamRun(props: { secs: ExSec[]; n: number; only: number; onExit: () => void }) {
+  const t = useGrokTheme();
+  const first = props.only >= 0 ? props.only : 0;
+  const last = props.only >= 0 ? props.only : 2;
+  const [si, setSi] = useState(first);
+  const [phase, setPhase] = useState<"run" | "brk" | "done">("run");
+  const [res, setRes] = useState<Record<string, boolean>>({});
+  const [scale, setScale] = useState(1);
+  const [end, setEnd] = useState(() => Date.now() + (props.secs[first]?.min ?? 30) * 60e3);
+  const [now, setNow] = useState(() => Date.now());
+  const idx = useRef(0);
+  const saved = useRef(false);
+  const begin = (i: number) => { idx.current = 0; setSi(i); setEnd(Date.now() + (props.secs[i]?.min ?? 30) * 60e3 * scale); setNow(Date.now()); setPhase("run"); };
+  const finish = () => setPhase(si >= last ? "done" : "brk");
+  useEffect(() => {
+    if (phase !== "run") return undefined;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [phase]);
+  useEffect(() => { if (phase === "run" && now >= end) setPhase(si >= last ? "done" : "brk"); }, [now, phase, end, si]);
+  const gen = useMemo(() => {
+    const items = props.secs[si]?.items ?? [];
+    return (): Q => (items[Math.min(idx.current, Math.max(0, items.length - 1))] as ExItem).mk();
+  }, [si]);
+  const sec = props.secs[si] as ExSec;
+  const grp = (f: (s: number, it: ExItem) => boolean) => {
+    let n = 0;
+    let c = 0;
+    props.secs.forEach((x: ExSec, s: number) => x.items.forEach((it: ExItem) => { if (f(s, it)) { n++; if (res[`${s}|${it.id}`]) c++; } }));
+    return { n, c, p: n ? Math.round((c / n) * 60) : 0 };
+  };
+  const parts: [string, { n: number; c: number; p: number }][] = [
+    ["言語知識（文字・語彙・文法）", grp((s: number, it: ExItem) => s === 0 || (s === 1 && it.cat !== "読解"))],
+    ["読解", grp((s: number, it: ExItem) => s === 1 && it.cat === "読解")],
+    ["聴解", grp((s: number) => s === 2)],
+  ];
+  const full = props.only < 0;
+  const total = parts.reduce((a: number, x) => a + x[1].p, 0);
+  const pass = total >= 95 && parts.every((x) => x[1].p >= 19);
+  useEffect(() => {
+    if (phase === "done" && full && !saved.current) {
+      saved.current = true;
+      DB.exams = [...(DB.exams ?? []), { n: props.n, t: Date.now(), p: parts.map((x) => x[1].p), tot: total }].slice(-50);
+      commit();
+    }
+  }, [phase]);
+  if (phase === "brk") {
+    const nx = props.secs[si + 1];
+    return (
+      <Card title={`第 ${si + 1} 節結束：${sec.name}`}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div>作答 {Object.keys(res).filter((k: string) => k.startsWith(`${si}|`)).length}/{sec.items.length} 題、答對 {Object.keys(res).filter((k: string) => k.startsWith(`${si}|`) && res[k]).length} 題</div>
+          <Note>{si === 0 ? "正式考試「文字・語彙」結束後直接進入「文法・読解」。" : "正式考試聴解前有休息時間。"}</Note>
+          {nx ? <div><Btn kind="primary" label={`開始第 ${si + 2} 節：${nx.name}（${Math.round(nx.min * scale)} 分）`} onClick={() => begin(si + 1)} /></div> : null}
+        </div>
+      </Card>
+    );
+  }
+  if (phase === "done") {
+    const cats: { cat: string; n: number; c: number }[] = [];
+    props.secs.forEach((x: ExSec, s: number) => x.items.forEach((it: ExItem) => {
+      const cat = (it.mk().cat ?? it.cat);
+      let e = cats.find((y) => y.cat === cat);
+      if (!e) { e = { cat, n: 0, c: 0 }; cats.push(e); }
+      e.n++;
+      if (res[`${s}|${it.id}`]) e.c++;
+    }));
+    const shown = full ? parts : parts.filter((x) => x[1].n > 0);
+    return (
+      <Card title={`📊 第${props.n}回 成績單${full ? "" : "（單節）"}`}>
+        <div style={{ display: "grid", gap: 10 }}>
+          {shown.map(([nm, x]) => (
+            <div key={nm} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 1fr 80px", gap: 8, alignItems: "center", fontSize: 14 }}>
+              <span>{nm}</span>
+              <Bar v={x.p / 60} color={x.p >= 19 ? t.text.success : t.text.danger} label={`${nm} ${x.p} 分`} />
+              <span style={{ textAlign: "right" }}><b>{x.p}</b>/60（{x.c}/{x.n}）</span>
+            </div>
+          ))}
+          {full ? <div style={{ fontSize: 20, fontWeight: 600, color: pass ? t.text.success : t.text.danger }}>總分 {total}/180　{pass ? "✅ 推估合格" : "❌ 未達合格標準"}</div> : null}
+          <Note>合格標準：總分 95/180 以上，且三個得分區分各 19/60 以上。這裡用「答對率 × 60」粗估（正式考試是尺度得分）。</Note>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 6 }}>
+            {cats.map((x) => (
+              <div key={x.cat} style={{ border: `1px solid ${t.border.subtle}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, borderLeft: `3px solid ${x.c / Math.max(1, x.n) >= 0.6 ? t.text.success : t.text.danger}` }}>
+                <div style={{ color: t.text.secondary }}>{x.cat}</div>
+                <div>{x.c}/{x.n}（{x.n ? Math.round((x.c / x.n) * 100) : 0}%）</div>
+              </div>
+            ))}
+          </div>
+          <Note>答錯的題已記入「成績 › 🔍 錯題分析」，可以一鍵針對練習。</Note>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn kind="primary" label="🔍 看錯題分析" onClick={() => navTo("review")} />
+            <Btn label="← 回模考列表" onClick={props.onExit} />
+          </div>
+        </div>
+      </Card>
+    );
+  }
+  const rem = end - now;
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 2, background: t.bg.base, paddingBottom: 4 }}>
+        <Card style={{ padding: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>第{props.n}回・{sec.name}</span>
+            <span role="timer" aria-label={`剩餘時間 ${mmss(rem)}`} style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: rem < 5 * 60e3 ? t.text.danger : t.text.primary }}>⏱ {mmss(rem)}</span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <Btn small label={scale === 1 ? "時間：正式" : "時間：減半"} onClick={() => { const ns = scale === 1 ? 0.5 : 1; setScale(ns); setEnd(Date.now() + rem * (ns / scale)); }} />
+              <Btn small label="交卷" onClick={finish} />
+            </div>
+          </div>
+          <div style={{ marginTop: 6 }}><Bar v={rem / ((sec.min || 1) * 60e3 * scale)} color={rem < 5 * 60e3 ? t.text.danger : t.text.accent} label="剩餘時間" /></div>
+        </Card>
+      </div>
+      <QuizRunner key={`x${props.n}s${si}`} gen={gen} total={sec.items.length} onResult={(q: Q, ok: boolean) => { idx.current++; setRes((r: Record<string, boolean>) => ({ ...r, [`${si}|${q.id}`]: ok })); }} onDone={finish} />
+    </div>
+  );
+}
+function ExamSets() {
+  const t = useGrokTheme();
+  const db = useDB();
+  const [run, setRun] = useState<{ n: number; only: number } | null>(null);
+  const ready = EXAMS.filter((x: ExamSet) => x.ready);
+  if (run) {
+    const x = EXAMS.find((y: ExamSet) => y.n === run.n) as ExamSet;
+    return <ExamRun key={`${run.n}-${run.only}`} secs={examSecs(x)} n={x.n} only={run.only} onExit={() => setRun(null)} />;
+  }
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <Card>
+        <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+          📚 第1回～第{EXAMS.length}回 完整模考：每回 102 題，依 JLPT N3 正式題型與題數：
+          <br />① 文字・語彙 35 題／30 分　② 文法・読解 39 題／70 分　③ 聴解 28 題／40 分（語音朗讀，男聲低、女聲高）
+        </div>
+        <Note>全部為原創模擬題（非官方考古題，官方試題有著作權）。每題附中文解說；成績以 180 分制估算並記入錯題分析。</Note>
+      </Card>
+      {EXAMS.map((x: ExamSet) => {
+        const hist = (db.exams ?? []).filter((r: ExamRes) => r.n === x.n);
+        const best = hist.reduce((a: number, r: ExamRes) => Math.max(a, r.tot), -1);
+        return (
+          <Card key={x.n} style={{ padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>第{x.n}回 模擬試験</div>
+                <div style={{ fontSize: 12, color: t.text.secondary }}>{x.ready ? `${x.qs.length} 題` : `準備中（${x.qs.length}/102 題）`}{best >= 0 ? `・最高 ${best}/180${best >= 95 ? " ✅" : ""}・考過 ${hist.length} 次` : ""}</div>
+              </div>
+              {x.ready ? <Btn kind="primary" label="▶ 開始（3 節計時）" onClick={() => setRun({ n: x.n, only: -1 })} /> : null}
+            </div>
+            {x.ready ? (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                {EX_SEC.map(([nm, min]: [string, number], i: number) => <Btn key={i} small label={`只考 ${nm.replace("言語知識", "").replace(/[（）]/g, "") || nm}（${min} 分）`} onClick={() => setRun({ n: x.n, only: i })} />)}
+              </div>
+            ) : null}
+          </Card>
+        );
+      })}
+      {!ready.length ? <Note>模考題目製作中。</Note> : null}
+    </div>
   );
 }
