@@ -6792,9 +6792,10 @@ function ReviewTab(props: { go: (tab: string, km?: KMode) => void }) {
                       DB.wrong = DB.wrong.filter((x: WrongItem) => x.id !== w.id);
                       commit();
                     }}
-                    style={{ font: "inherit", fontSize: 12, cursor: "pointer", background: "transparent", border: "none", color: t.text.secondary }}
+                    aria-label="從錯題本移除"
+                    style={{ font: "inherit", fontSize: 12, cursor: "pointer", background: "transparent", border: `1px solid ${t.border.subtle}`, borderRadius: 999, padding: "4px 12px", minHeight: 36, minWidth: 44, color: t.text.secondary }}
                   >
-                    移除
+                    ✕ 移除
                   </button>
                 </div>
                 <div lang="ja" style={{ fontFamily: JA_FONT, whiteSpace: "pre-line", margin: "4px 0" }}>
