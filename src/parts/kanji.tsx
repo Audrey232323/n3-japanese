@@ -38,13 +38,21 @@ function kanjiPool(range: string): Kanji[] {
   const [a, b] = range.split("-").map(Number) as [number, number];
   return KANJI.slice(a - 1, b);
 }
+function trickyEx(x: Kanji): KanjiEx | undefined {
+  return shuffle(x.ex).find((y: KanjiEx) => !y.m.includes(y.w) && !y.m.split(/[、；，]/).some((z: string) => z.trim() === y.w));
+}
 function kanjiQ(pool: Kanji[], kind: string): Q {
-  const x = pick(pool);
-  const kd = kind === "mix" ? pick(["read", "read", "mean", "write"]) : kind;
+  const mp = kind === "mean" ? pool.filter((y: Kanji) => !y.m.includes(y.k) || trickyEx(y)) : pool;
+  const x = pick(mp.length ? mp : pool);
+  let kd = kind === "mix" ? pick(["read", "read", "mean", "write"]) : kind;
   const e = pick(x.ex);
+  // 中文意思跟字面一樣的字（如 雪＝雪）不考字義，改考「日文意思和中文不同」的例詞；沒有就改考讀音
+  const tricky = trickyEx(x);
+  if (kd === "mean" && x.m.includes(x.k) && !tricky) kd = "read";
   const base = { sec: "kanji" as Sec, kana: [] as string[] };
   const exp = `${x.k}：${x.m}\n音讀：${x.on || "—"}　訓讀：${x.kun || "—"}\n${x.ex.map((y: KanjiEx) => `${y.w}（${y.r}）＝${y.m}`).join("\n")}`;
-  if (kd === "mean" && x.m.includes(x.k)) {
+  if (kd === "mean" && x.m.includes(x.k) && tricky) {
+    const e = tricky;
     // 中文意思跟字面一樣時太簡單 → 改考例詞的意思（日文和中文常不同）
     const em = new Set(x.ex.map((y: KanjiEx) => y.m));
     const others = shuffle([...new Set(KANJI.filter((y: Kanji) => y.k !== x.k).flatMap((y: Kanji) => y.ex).filter((y: KanjiEx) => !em.has(y.m) && !y.w.includes(x.k)).map((y: KanjiEx) => y.m))]).slice(0, 3);

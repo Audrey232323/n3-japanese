@@ -6012,6 +6012,7 @@ function VocabTab() {
                   <Speak text={v.ex} />
                 </div>
                 <div style={{ fontSize: 13, color: t.text.secondary }}>{v.tr}</div>
+                <KanjiLinks w={v.w} />
               </div>
             ))}
             {shown.length > lim ? <Btn label={`顯示更多（還有 ${shown.length - lim} 個）`} onClick={() => setLim(lim + 200)} /> : null}
@@ -6057,9 +6058,25 @@ function cmpQ(gi: number, qi: number): Q {
     review: q.s,
   };
 }
+let PENDING_CMP: string | null = null;
+let PENDING_GRAM = -1;
+const CMP_LINK: Record<string, string[]> = {
+  "ようにする／ことにする": ["～ようにする", "～ことにする", "～ようになる", "～ことになる"],
+  "ばかり": ["～ばかり（している）", "～たばかり"],
+  "わけ": ["～わけではない", "～わけがない", "～わけだ", "～わけにはいかない"],
+  "そうだ": ["～そうだ（傳聞）", "～そうだ（樣態）"],
+  "ために／ように": ["～ために", "～ように（目的）"],
+  "うちに／間": ["～うちに", "～ないうちに", "～間に"],
+  "ところだ": ["～ところだ", "～たところ", "～ところに"],
+  "ても／のに": ["～ても", "～のに", "たとえ～ても"],
+  "尊敬語／謙譲語": ["尊敬語・特別動詞", "謙譲語・特別動詞"],
+};
+function cmpFor(pat: string): number[] {
+  return CMP.map((c: Cmp, i: number): [Cmp, number] => [c, i]).filter((x: [Cmp, number]) => (CMP_LINK[x[0].short] ?? []).includes(pat)).map((x: [Cmp, number]) => x[1]);
+}
 function CmpPanel() {
   const t = useGrokTheme();
-  const [g, setG] = useState("all");
+  const [g, setG] = useState(() => { const v = PENDING_CMP ?? "all"; PENDING_CMP = null; return v; });
   const gen = useMemo(() => {
     const items: [number, number][] = CMP.flatMap((c: Cmp, gi: number) => c.qs.map((_q: CmpQ, qi: number): [number, number] => [gi, qi])).filter((x: [number, number]) => g === "all" || String(x[0]) === g);
     const d = deck(items);
@@ -6093,8 +6110,12 @@ function GrammarTab() {
   const [qq, setQq] = useState("");
   const genFill = useMemo(() => {
     const d = deck(GRAMMAR);
-    return () => gramQ(d());
-  }, []);
+    return () => {
+      const pg = GRAMMAR[PENDING_GRAM];
+      PENDING_GRAM = -1;
+      return gramQ(pg ?? d());
+    };
+  }, [sub]);
   const genOrder = useMemo(() => {
     const d = deck(ORDER);
     return () => orderQ(d(), "grammar", "句子排序（★ 題）");
@@ -6130,6 +6151,12 @@ function GrammarTab() {
                   <Speak text={g.full} />
                 </div>
                 <div style={{ fontSize: 13, color: t.text.secondary }}>{g.tr}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                  <Btn small label="✏️ 練這個文法" onClick={() => { PENDING_GRAM = GRAMMAR.indexOf(g); setSub("fill"); window.scrollTo(0, 0); }} />
+                  {cmpFor(g.pat).map((ci: number) => (
+                    <Btn key={ci} small label={`⚖️ 比較：${CMP[ci]?.short ?? ""}`} onClick={() => { PENDING_CMP = String(ci); setSub("cmp"); window.scrollTo(0, 0); }} />
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -7464,13 +7491,21 @@ function kanjiPool(range: string): Kanji[] {
   const [a, b] = range.split("-").map(Number) as [number, number];
   return KANJI.slice(a - 1, b);
 }
+function trickyEx(x: Kanji): KanjiEx | undefined {
+  return shuffle(x.ex).find((y: KanjiEx) => !y.m.includes(y.w) && !y.m.split(/[、；，]/).some((z: string) => z.trim() === y.w));
+}
 function kanjiQ(pool: Kanji[], kind: string): Q {
-  const x = pick(pool);
-  const kd = kind === "mix" ? pick(["read", "read", "mean", "write"]) : kind;
+  const mp = kind === "mean" ? pool.filter((y: Kanji) => !y.m.includes(y.k) || trickyEx(y)) : pool;
+  const x = pick(mp.length ? mp : pool);
+  let kd = kind === "mix" ? pick(["read", "read", "mean", "write"]) : kind;
   const e = pick(x.ex);
+  // 中文意思跟字面一樣的字（如 雪＝雪）不考字義，改考「日文意思和中文不同」的例詞；沒有就改考讀音
+  const tricky = trickyEx(x);
+  if (kd === "mean" && x.m.includes(x.k) && !tricky) kd = "read";
   const base = { sec: "kanji" as Sec, kana: [] as string[] };
   const exp = `${x.k}：${x.m}\n音讀：${x.on || "—"}　訓讀：${x.kun || "—"}\n${x.ex.map((y: KanjiEx) => `${y.w}（${y.r}）＝${y.m}`).join("\n")}`;
-  if (kd === "mean" && x.m.includes(x.k)) {
+  if (kd === "mean" && x.m.includes(x.k) && tricky) {
+    const e = tricky;
     // 中文意思跟字面一樣時太簡單 → 改考例詞的意思（日文和中文常不同）
     const em = new Set(x.ex.map((y: KanjiEx) => y.m));
     const others = shuffle([...new Set(KANJI.filter((y: Kanji) => y.k !== x.k).flatMap((y: Kanji) => y.ex).filter((y: KanjiEx) => !em.has(y.m) && !y.w.includes(x.k)).map((y: KanjiEx) => y.m))]).slice(0, 3);
