@@ -4017,7 +4017,7 @@ function QuizRunner(props: { gen: () => Q; total?: number; onResult?: (q: Q, ok:
       </div>
       {q.passage ? (
         <div lang="ja" style={{ fontFamily: JA_FONT, background: t.bg.subtle, borderRadius: 8, padding: 12, lineHeight: 2, marginBottom: 12, fontSize: 15, whiteSpace: "pre-line" }}>
-          <Rich text={q.passage} />
+          <TapPassage key={q.id} text={q.passage} />
           <div style={{ marginTop: 6 }}>
             <Speak text={q.passage} label="朗讀全文" />
           </div>
@@ -5624,9 +5624,9 @@ function KanaTab() {
     KANA_START = null;
   }, []);
   const lb = { font: "inherit", cursor: "pointer", background: "transparent", border: "none", color: t.text.primary, padding: "0 4px", minHeight: 44, minWidth: 36, fontFamily: JA_FONT } as const;
-  const [script, setScript] = useState<Script>("kata");
+  const [script, setScript] = useState<Script>(() => (takeDeep("kana_script") as Script | null) ?? "kata");
   const [dir, setDir] = useState<"k2r" | "r2k">("k2r");
-  const [rows, setRows] = useState<string[]>(["a", "ka", "sa", "ta", "na"]);
+  const [rows, setRows] = useState<string[]>(() => { const r = takeDeep("kana_rows"); return r ? r.split(",") : ["a", "ka", "sa", "ta", "na"]; });
   const [weakOnly, setWeakOnly] = useState(false);
   const [confW, setConfW] = useState<"all" | "h" | "k">("all");
   const [mm, setMm] = useState<"mc" | "game">("mc");
@@ -5968,7 +5968,7 @@ function Flashcards(props: { items: Vocab[] }) {
 
 function VocabTab() {
   const t = useGrokTheme();
-  const [sub, setSub] = useState<"srs" | "card" | "quiz" | "list">("srs");
+  const [sub, setSub] = useState<"srs" | "card" | "quiz" | "list">(() => (takeDeep("vocab") as "srs" | "card" | "quiz" | "list" | null) ?? "srs");
   const [lim, setLim] = useState(120);
   const [pos, setPos] = useState("all");
   const [topic, setTopic] = useState("all");
@@ -6115,24 +6115,32 @@ function CmpPanel() {
 }
 function GrammarTab() {
   const t = useGrokTheme();
-  const [sub, setSub] = useState<"list" | "fill" | "order" | "cmp">(() => (PENDING_GRAM >= 0 ? "fill" : "list"));
+  const [dg] = useState(() => (takeDeep("grammar") ?? "").split(":"));
+  const [rng, setRng] = useState<[number, number] | null>(() => { const m = (dg[1] ?? "").match(/^(\d+)-(\d+)$/); return m ? [Number(m[1]), Number(m[2])] : null; });
+  const [sub, setSub] = useState<"list" | "fill" | "order" | "cmp">(() => (PENDING_GRAM >= 0 ? "fill" : ((dg[0] as "list" | "fill" | "order" | "cmp") || "list")));
   const [qq, setQq] = useState("");
   const genFill = useMemo(() => {
-    const d = deck(GRAMMAR);
+    const d = deck(rng ? GRAMMAR.slice(rng[0] - 1, rng[1]) : GRAMMAR);
     return () => {
       const pg = GRAMMAR[PENDING_GRAM];
       PENDING_GRAM = -1;
       return gramQ(pg ?? d());
     };
-  }, [sub]);
+  }, [sub, rng]);
   const genOrder = useMemo(() => {
     const d = deck(ORDER);
     return () => orderQ(d(), "grammar", "句子排序（★ 題）");
   }, []);
-  const shown = GRAMMAR.filter((g: Gram) => !qq || g.pat.includes(qq) || g.m.includes(qq) || plain(g.ex).includes(qq));
+  const shown = GRAMMAR.filter((g: Gram) => !rng || (GRAMMAR.indexOf(g) >= rng[0] - 1 && GRAMMAR.indexOf(g) < rng[1])).filter((g: Gram) => !qq || g.pat.includes(qq) || g.m.includes(qq) || plain(g.ex).includes(qq));
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <Chips value={sub} onChange={setSub} options={[["list", `文法一覽（${GRAMMAR.length}）`], ["fill", "填空選擇"], ["order", `句子排序 ★（${ORDER.length}）`], ["cmp", `易混文法比較（${CMP.length} 組）`]]} />
+      {rng && (sub === "list" || sub === "fill") ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 14 }}>
+          <span>🔥 特訓範圍：只看第 {rng[0]}–{rng[1]} 個文法</span>
+          <Btn small label="顯示全部" onClick={() => setRng(null)} />
+        </div>
+      ) : null}
       {sub === "cmp" ? <CmpPanel /> : null}
       {sub === "fill" ? <QuizRunner gen={genFill} /> : null}
       {sub === "order" ? <QuizRunner gen={genOrder} /> : null}
@@ -6383,8 +6391,9 @@ function FullExam() {
   );
 }
 function MockTab() {
-  const [sec, setSec] = useState("all");
-  const [mode, setMode] = useState("sets");
+  const [dm] = useState(() => (takeDeep("mock") ?? "").split(":"));
+  const [sec, setSec] = useState(dm[1] || "all");
+  const [mode, setMode] = useState(dm[0] || "sets");
   const full = mode === "full";
   const items = useMemo(() => MOCK.filter((m: MQ) => sec === "all" || m.s === sec), [sec]);
   const gen = useMemo(() => {
@@ -6404,12 +6413,12 @@ function MockTab() {
     <div style={{ display: "grid", gap: 12 }}>
       <Card>
         <div style={{ display: "grid", gap: 10 }}>
-          <Chips value={mode} onChange={setMode} options={[["sets", `📚 第1–${EXAMS.length}回 模考`], ["prac", "分項練習（隨機）"], ["full", `完整模考（${MOCK.length} 題，依題型順序）`], ["exam", "⏱ 計時模考（N3 正式時間）"]]} />
+          <Chips value={mode} onChange={setMode} scroll={NARROW()} options={[["sets", `📚 第1–${EXAMS.length}回 模考`], ["guide", "🧭 題型攻略・★ 練習"], ["prac", "分項練習（隨機）"], ["full", `完整模考（${MOCK.length} 題，依題型順序）`], ["exam", "⏱ 計時模考（N3 正式時間）"]]} />
           {mode === "prac" ? <Chips small value={sec} onChange={setSec} options={opts} /> : null}
           <Note>全部為原創「模擬題」，仿照 JLPT N3 題型（文字・語彙、文法、讀解），並非官方考古題。</Note>
         </div>
       </Card>
-      {mode === "sets" ? <ExamSets /> : mode === "exam" ? <FullExam /> : <QuizRunner key={`${sec}|${full}`} gen={gen} total={full ? MOCK.length : undefined} />}
+      {mode === "guide" ? <ExamGuide /> : mode === "sets" ? <ExamSets /> : mode === "exam" ? <FullExam /> : <QuizRunner key={`${sec}|${full}`} gen={gen} total={full ? MOCK.length : undefined} />}
     </div>
   );
 }
@@ -6474,7 +6483,7 @@ function ListenTab() {
       setHasJa(false);
     }
   }, []);
-  const [lt, setLt] = useState("all");
+  const [lt, setLt] = useState(() => takeDeep("listen") ?? "all");
   const gen = useMemo(() => {
     const d = deck(LISTEN.filter((l: LI) => lt === "all" || l.t === lt));
     return () => listenQ(d());
@@ -6746,7 +6755,7 @@ function ReviewTab(props: { go: (tab: string, km?: KMode) => void }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <ActivityPanel />
-      <MistakeAnalysis />
+      <div id="mistake-analysis" style={{ scrollMarginTop: 8 }}><MistakeAnalysis /></div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8 }}>
         {SEC_LIST.map((s: Sec) => {
           const st = db.stats[s] ?? { c: 0, w: 0 };
@@ -7717,8 +7726,9 @@ function KanjiDetail(props: { x: Kanji; onClose: () => void; onPick: (x: Kanji) 
 }
 function KanjiTab() {
   const t = useGrokTheme();
-  const [sub, setSub] = useState<"list" | "quiz">("list");
-  const [range, setRange] = useState("1-100");
+  const [dk0] = useState(() => (takeDeep("kanji") ?? "").split(":"));
+  const [sub, setSub] = useState<"list" | "quiz">(() => ((dk0[0] as "list" | "quiz") || "list"));
+  const [range, setRange] = useState(dk0[1] || "1-100");
   const [kind, setKind] = useState("mix");
   const [sel, setSel] = useState<Kanji | null>(() => { const k = PENDING_KANJI; PENDING_KANJI = null; return k ? KANJI_BY.get(k) ?? null : null; });
   useEffect(() => {
@@ -8023,7 +8033,22 @@ export default function App() {
   useEffect(() => {
     const h = (e: Event) => { const d = (e as CustomEvent).detail; if (typeof d === "string") goTab(d); };
     window.addEventListener("n3nav", h);
-    return () => window.removeEventListener("n3nav", h);
+    const h2 = (e: Event) => {
+      const d = (e as CustomEvent).detail as { tab: string; sub?: string };
+      let km: KMode | undefined;
+      if (d.tab === "kana" && d.sub) {
+        const [m, sc, rw] = d.sub.split(":");
+        km = m as KMode;
+        if (sc) DEEP.kana_script = sc;
+        if (rw) DEEP.kana_rows = rw;
+        delete DEEP.kana;
+      }
+      go(d.tab, km);
+      const sc2 = DEEP_SCROLL;
+      if (sc2) window.setTimeout(() => { document.getElementById(sc2)?.scrollIntoView({ block: "start" }); DEEP_SCROLL = ""; }, 400);
+    };
+    window.addEventListener("n3go", h2);
+    return () => { window.removeEventListener("n3nav", h); window.removeEventListener("n3go", h2); };
   }, []);
   const tot = Object.values(db.stats).reduce((s: { c: number; w: number }, x: { c: number; w: number }) => ({ c: s.c + x.c, w: s.w + x.w }), { c: 0, w: 0 });
   const n = tot.c + tot.w;
@@ -8049,6 +8074,7 @@ export default function App() {
             <span>答題 {n}・正確 {n ? Math.round((tot.c / n) * 100) : 0}%・錯題 {db.wrong.length}・弱點 {Object.keys(db.weak).filter((c: string) => weakScore(c) > 0).length}</span>
           </div>
         </div>
+        <Bootcamp home={tab === "kana"} />
         <GlobalSearch />
         {!db.onb && n === 0 ? <Onboarding go={go} /> : null}
         <TodayCard go={go} />
@@ -8089,13 +8115,13 @@ export default function App() {
         </nav>
         {!STORAGE_OK ? <Note>提示：此環境無法使用 localStorage，進度只在這次開啟期間有效。</Note> : null}
         {tab === "kana" ? <KanaTab key={kk} /> : null}
-        {tab === "kanji" ? <KanjiTab /> : null}
-        {tab === "vocab" ? <VocabTab /> : null}
-        {tab === "grammar" ? <GrammarTab /> : null}
-        {tab === "mock" ? <MockTab /> : null}
-        {tab === "listen" ? <ListenTab /> : null}
-        {tab === "song" ? <SongTab /> : null}
-        {tab === "review" ? <ReviewTab go={go} /> : null}
+        {tab === "kanji" ? <KanjiTab key={kk} /> : null}
+        {tab === "vocab" ? <VocabTab key={kk} /> : null}
+        {tab === "grammar" ? <GrammarTab key={kk} /> : null}
+        {tab === "mock" ? <MockTab key={kk} /> : null}
+        {tab === "listen" ? <ListenTab key={kk} /> : null}
+        {tab === "song" ? <SongTab key={kk} /> : null}
+        {tab === "review" ? <ReviewTab key={kk} go={go} /> : null}
       </div>
     </div>
   );
@@ -10514,6 +10540,418 @@ function ExamSets() {
         );
       })}
       {!ready.length ? <Note>模考題目製作中。</Note> : null}
+    </div>
+  );
+}
+
+const R10_JSON: unknown = {"star": [{"q": "駅の前に ＿＿ ＿＿ ★ ＿＿ 行ってみたい。", "o": ["ばかりの", "新しく", "できた", "カフェに"], "e": "正確順序：新しく／できた／ばかりの／カフェに（★=ばかりの）。\n駅の前に新しくできたばかりのカフェに行ってみたい。＝想去車站前剛開的咖啡店看看。\nVた＋ばかり＝剛…；「ばかりの」後面接名詞（カフェ）。", "tag": "g:～たばかり", "fq": "駅[えき]の前[まえ]に ＿＿ ＿＿ ★ ＿＿ 行[い]ってみたい。", "fo": ["ばかりの", "新[あたら]しく", "できた", "カフェに"]}, {"q": "母が ＿＿ ★ ＿＿ ＿＿ とてもおいしかった。", "o": ["作って", "昨日", "くれた", "ケーキは"], "e": "正確順序：昨日／作って／くれた／ケーキは（★=作って）。\n母が昨日作ってくれたケーキは、とてもおいしかった。＝媽媽昨天做給我的蛋糕非常好吃。\n「母が昨日作ってくれた」整段修飾「ケーキ」；「ケーキは」是主題，後面接述語「おいしかった」。", "tag": "", "fq": "母[はは]が ＿＿ ★ ＿＿ ＿＿ とてもおいしかった。", "fo": ["作[つく]って", "昨日[きのう]", "くれた", "ケーキは"]}, {"q": "雨が ＿＿ ＿＿ ＿＿ ★、試合は中止になった。", "o": ["ので", "強く", "降って", "きた"], "e": "正確順序：強く／降って／きた／ので（★=ので）。\n雨が強く降ってきたので、試合は中止になった。＝因為雨下大了，比賽取消了。\n副詞「強く」放在動詞前；Vてくる＝（變化）開始…；「ので」表原因，緊接在「、」前。", "tag": "g:～てくる", "fq": "雨[あめ]が ＿＿ ＿＿ ＿＿ ★、試合[しあい]は中止[ちゅうし]になった。", "fo": ["ので", "強[つよ]く", "降[ふ]って", "きた"]}, {"q": "日本語が ＿＿ ★ ＿＿ ＿＿、毎日練習しています。", "o": ["話せる", "上手に", "ように", "なるために"], "e": "正確順序：上手に／話せる／ように／なるために（★=話せる）。\n日本語が上手に話せるようになるために、毎日練習しています。＝為了能把日語說得流利，我每天練習。\n可能形＋ようになる＝變得能…；～ために＝為了…。", "tag": "g:～ようになる", "fq": "日本語[にほんご]が ＿＿ ★ ＿＿ ＿＿、毎日[まいにち]練習[れんしゅう]しています。", "fo": ["話[はな]せる", "上手[じょうず]に", "ように", "なるために"]}, {"q": "この本は ＿＿ ＿＿ ★ ＿＿ 書かれているので、読みやすい。", "o": ["分かる", "子ども", "にも", "ように"], "e": "正確順序：子ども／にも／分かる／ように（★=分かる）。\nこの本は子どもにも分かるように書かれているので、読みやすい。＝這本書寫得連小孩都看得懂，所以很好讀。\n「～ように＋動詞」＝為了能…而做（目的）。", "tag": "g:～ように（目的）", "fq": "この本[ほん]は ＿＿ ＿＿ ★ ＿＿ 書[か]かれているので、読[よ]みやすい。", "fo": ["分[わ]かる", "子[こ]ども", "にも", "ように"]}, {"q": "彼が ＿＿ ★ ＿＿ ＿＿ 知りませんでした。", "o": ["やめた", "会社を", "ことを", "全然"], "e": "正確順序：会社を／やめた／ことを／全然（★=やめた）。\n彼が会社をやめたことを全然知りませんでした。＝我完全不知道他辭職了。\n「彼が会社をやめた」＋こと＝名詞化；「全然」放在否定的「知りませんでした」前。", "tag": "", "fq": "彼[かれ]が ＿＿ ★ ＿＿ ＿＿ 知[し]りませんでした。", "fo": ["やめた", "会社[かいしゃ]を", "ことを", "全然[ぜんぜん]"]}, {"q": "電車に ＿＿ ＿＿ ★ ＿＿ 気がついた。", "o": ["ことに", "傘を", "忘れた", "家に着いてから"], "e": "正確順序：傘を／忘れた／ことに／家に着いてから（★=ことに）。\n電車に傘を忘れたことに、家に着いてから気がついた。＝到家之後才發現把傘忘在電車上了。\n「～ことに気がつく」＝注意到…這件事。", "tag": "", "fq": "電車[でんしゃ]に ＿＿ ＿＿ ★ ＿＿ 気[き]がついた。", "fo": ["ことに", "傘[かさ]を", "忘[わす]れた", "家[いえ]に着[つ]いてから"]}, {"q": "私が ＿＿ ★ ＿＿ ＿＿、日本の小説です。", "o": ["読んで", "今", "いる", "のは"], "e": "正確順序：今／読んで／いる／のは（★=読んで）。\n私が今読んでいるのは、日本の小説です。＝我現在在讀的是日本小說。\n「～のは…です」＝我…的是…（強調句）。", "tag": "", "fq": "私[わたし]が ＿＿ ★ ＿＿ ＿＿、日本[にほん]の小説[しょうせつ]です。", "fo": ["読[よ]んで", "今[いま]", "いる", "のは"]}, {"q": "宿題が ＿＿ ＿＿ ★ ＿＿ 遊びに行ってはいけません。", "o": ["で", "終わって", "から", "ないと"], "e": "正確順序：終わって／から／で／ないと（★=で）。\n宿題が終わってからでないと、遊びに行ってはいけません。＝作業沒寫完之前不可以去玩。\n～てからでないと…ない＝不先…就不能…。", "tag": "g:～てからでないと", "fq": "宿題[しゅくだい]が ＿＿ ＿＿ ★ ＿＿ 遊[あそ]びに行[い]ってはいけません。", "fo": ["で", "終[お]わって", "から", "ないと"]}, {"q": "先生に ＿＿ ★ ＿＿ ＿＿ 書き直した。", "o": ["とおりに", "言われた", "作文を", "もう一度"], "e": "正確順序：言われた／とおりに／作文を／もう一度（★=とおりに）。\n先生に言われたとおりに、作文をもう一度書き直した。＝照老師說的，把作文重寫了一次。\nVた＋とおりに＝按照…。", "tag": "g:～とおりに", "fq": "先生[せんせい]に ＿＿ ★ ＿＿ ＿＿ 書[か]き直[なお]した。", "fo": ["とおりに", "言[い]われた", "作文[さくぶん]を", "もう一度[いちど]"]}, {"q": "天気予報に ＿＿ ＿＿ ★ ＿＿ 雨が降るそうだ。", "o": ["午後", "よると", "明日は", "から"], "e": "正確順序：よると／明日は／午後／から（★=午後）。\n天気予報によると、明日は午後から雨が降るそうだ。＝根據氣象預報，明天下午開始會下雨。\n「～によると…そうだ」是傳聞的固定搭配。", "tag": "g:～によると", "fq": "天気[てんき]予報[よほう]に ＿＿ ＿＿ ★ ＿＿ 雨[あめ]が降[ふ]るそうだ。", "fo": ["午後[ごご]", "よると", "明日[あした]は", "から"]}, {"q": "弟は ＿＿ ★ ＿＿ ＿＿ ばかりいる。", "o": ["しないで", "勉強", "ゲーム", "をして"], "e": "正確順序：勉強／しないで／ゲーム／をして（★=しないで）。\n弟は勉強しないでゲームをしてばかりいる。＝弟弟不念書，老是在打電動。\nVて＋ばかりいる＝老是在…。", "tag": "g:～ばかり（している）", "fq": "弟[おとうと]は ＿＿ ★ ＿＿ ＿＿ ばかりいる。", "fo": ["しないで", "勉強[べんきょう]", "ゲーム", "をして"]}, {"q": "夜遅く ＿＿ ＿＿ ★ ＿＿、近所の人に迷惑だ。", "o": ["歌う", "大きな", "声で", "のは"], "e": "正確順序：大きな／声で／歌う／のは（★=歌う）。\n夜遅く大きな声で歌うのは、近所の人に迷惑だ。＝深夜大聲唱歌會吵到鄰居。\n「大きな」修飾「声」；「動詞＋のは」把整段變成主語。", "tag": "", "fq": "夜[よる]遅[おそ]く ＿＿ ＿＿ ★ ＿＿、近所[きんじょ]の人[ひと]に迷惑[めいわく]だ。", "fo": ["歌[うた]う", "大[おお]きな", "声[こえ]で", "のは"]}, {"q": "熱が ＿＿ ★ ＿＿ ＿＿ 学校を休んだ。", "o": ["あった", "三十八度も", "ので", "今日は"], "e": "正確順序：三十八度も／あった／ので／今日は（★=あった）。\n熱が三十八度もあったので、今日は学校を休んだ。＝發燒到三十八度，所以今天請假沒上學。\n「数量＋も」＝竟有…之多。", "tag": "", "fq": "熱[ねつ]が ＿＿ ★ ＿＿ ＿＿ 学校[がっこう]を休[やす]んだ。", "fo": ["あった", "三[さん]十[じゅう]八[はち]度[ど]も", "ので", "今日[きょう]は"]}, {"q": "この料理は ＿＿ ＿＿ ★ ＿＿ ので、忙しい日にぴったりだ。", "o": ["五分で", "材料さえ", "あれば", "作れる"], "e": "正確順序：材料さえ／あれば／五分で／作れる（★=五分で）。\nこの料理は材料さえあれば五分で作れるので、忙しい日にぴったりだ。＝這道菜只要有材料，五分鐘就能做好，很適合忙碌的日子。\n～さえ～ば＝只要…就…。", "tag": "g:～さえ～ば", "fq": "この料理[りょうり]は ＿＿ ＿＿ ★ ＿＿ ので、忙[いそが]しい日[ひ]にぴったりだ。", "fo": ["五[ご]分[ふん]で", "材料[ざいりょう]さえ", "あれば", "作[つく]れる"]}, {"q": "私は ＿＿ ★ ＿＿ ＿＿ ことにした。", "o": ["日本の", "来年", "大学に", "留学する"], "e": "正確順序：来年／日本の／大学に／留学する（★=日本の）。\n私は来年、日本の大学に留学することにした。＝我決定明年去日本的大學留學。\n辭書形＋ことにする＝（自己）決定…。", "tag": "g:～ことにする", "fq": "私[わたし]は ＿＿ ★ ＿＿ ＿＿ ことにした。", "fo": ["日本[にほん]の", "来年[らいねん]", "大学[だいがく]に", "留学[りゅうがく]する"]}, {"q": "部屋の ＿＿ ＿＿ ★ ＿＿ 寝てしまった。", "o": ["まま", "電気を", "つけた", "ソファで"], "e": "正確順序：電気を／つけた／まま／ソファで（★=まま）。\n部屋の電気をつけたまま、ソファで寝てしまった。＝開著房間的燈就在沙發上睡著了。\nVた＋まま＝保持…的狀態。", "tag": "g:～まま", "fq": "部屋[へや]の ＿＿ ＿＿ ★ ＿＿ 寝[ね]てしまった。", "fo": ["まま", "電気[でんき]を", "つけた", "ソファで"]}, {"q": "試験に ＿＿ ★ ＿＿ ＿＿ 勉強している。", "o": ["ように", "合格できる", "毎日", "図書館で"], "e": "正確順序：合格できる／ように／毎日／図書館で（★=ように）。\n試験に合格できるように、毎日図書館で勉強している。＝為了能考上，每天在圖書館念書。\n可能形＋ように＝為了能…。", "tag": "g:～ように（目的）", "fq": "試験[しけん]に ＿＿ ★ ＿＿ ＿＿ 勉強[べんきょう]している。", "fo": ["ように", "合格[ごうかく]できる", "毎日[まいにち]", "図書館[としょかん]で"]}, {"q": "この店は ＿＿ ＿＿ ★ ＿＿、いつも客が多い。", "o": ["だけでなく", "値段が", "安い", "味もいいので"], "e": "正確順序：値段が／安い／だけでなく／味もいいので（★=だけでなく）。\nこの店は値段が安いだけでなく味もいいので、いつも客が多い。＝這家店不只便宜，味道也好，所以客人總是很多。\n～だけでなく～も＝不只…也…。", "tag": "g:～だけでなく", "fq": "この店[みせ]は ＿＿ ＿＿ ★ ＿＿、いつも客[きゃく]が多[おお]い。", "fo": ["だけでなく", "値段[ねだん]が", "安[やす]い", "味[あじ]もいいので"]}, {"q": "子どもの ＿＿ ★ ＿＿ ＿＿ よくこの川で泳いだものだ。", "o": ["夏に", "ころは", "なると", "友達と"], "e": "正確順序：ころは／夏に／なると／友達と（★=夏に）。\n子どものころは、夏になると友達とよくこの川で泳いだものだ。＝小時候一到夏天，常和朋友在這條河游泳。\nVた＋ものだ＝（回想）以前常…。", "tag": "g:～ものだ（回想）", "fq": "子[こ]どもの ＿＿ ★ ＿＿ ＿＿ よくこの川[かわ]で泳[およ]いだものだ。", "fo": ["夏[なつ]に", "ころは", "なると", "友達[ともだち]と"]}, {"q": "道に ＿＿ ＿＿ ★ ＿＿、親切な人が駅まで連れて行ってくれた。", "o": ["いた", "迷って", "困って", "ところ"], "e": "正確順序：迷って／困って／いた／ところ（★=いた）。\n道に迷って困っていたところ、親切な人が駅まで連れて行ってくれた。＝迷路正發愁的時候，有位好心人帶我到車站。\nVていた＋ところ＝正在…的時候（發生了…）。", "tag": "g:～たところ", "fq": "道[みち]に ＿＿ ＿＿ ★ ＿＿、親切[しんせつ]な人[ひと]が駅[えき]まで連[つ]れて行[い]ってくれた。", "fo": ["いた", "迷[まよ]って", "困[こま]って", "ところ"]}], "ps": {"ex": "みなみ家具[かぐ]株式会社[かぶしきがいしゃ]\n営業[えいぎょう]部[ぶ]　御中[おんちゅう]\n拝啓[はいけい]\n寒[さむ]い日[ひ]が続[つづ]いておりますが、いかがお過[す]ごしでしょうか。\n私[わたし]は、ひかり貿易[ぼうえき]株式会社[かぶしきがいしゃ]輸出入部[ゆしゅつにゅうぶ]の田中[たなか]と申[もう]します。\n先日[せんじつ]、御社[おんしゃ]のホームページで、来年[らいねん]の春[はる]に発売[はつばい]される新[あたら]しい机[つくえ]といすのカタログを拝見[はいけん]しました。\n弊社[へいしゃ]では現在[げんざい]、海外[かいがい]のお客様[きゃくさま]に日本[にほん]の家具[かぐ]を紹介[しょうかい]しており、御社[おんしゃ]の新[しん]製品[せいひん]にもたいへん興味[きょうみ]を持[も]っております。\nつきましては、新[しん]製品[せいひん]のカタログと価格[かかく]表[ひょう]を、今月[こんげつ]末[まつ]までに弊社[へいしゃ]あてにお送[おく]りいただけないでしょうか。\nどうぞよろしくお願[ねが]いいたします。\n敬具[けいぐ]\nひかり貿易[ぼうえき]株式会社[かぶしきがいしゃ]　輸出入部[ゆしゅつにゅうぶ]　田中[たなか]一郎[いちろう]", "a1": "＜ご注文[ちゅうもん]の商品[しょうひん]について＞\n山本[やまもと]様[さま]\nこのたびは、さくらネットショップをご利用[りよう]いただき、誠[まこと]にありがとうございます。\nご注文[ちゅうもん]いただいたコーヒーカップのセットですが、人気[にんき]のため在庫[ざいこ]がなくなってしまい、お届[とど]けが一週間[いっしゅうかん]ほど遅[おく]れる予定[よてい]です。\nご迷惑[めいわく]をおかけして、誠[まこと]に申[もう]し訳[わけ]ございません。\n遅[おく]れても問題[もんだい]ない場合[ばあい]は、このままお待[ま]ちください。\n注文[ちゅうもん]を取[と]り消[け]したい場合[ばあい]は、今週[こんしゅう]の金曜日[きんようび]までに、このメールにご返信[へんしん]ください。\nさくらネットショップ　佐藤[さとう]", "a2": "＜断水[だんすい]のお知[し]らせ＞\nあおばマンションにお住[す]まいの皆様[みなさま]\n水道[すいどう]管[かん]の工事[こうじ]のため、下記[かき]の時間[じかん]、水[みず]が使[つか]えなくなります。\n日時[にちじ]：十一月[じゅういちがつ]二[に]十[じゅう]五[ご]日[にち]（水[すい]）午前[ごぜん]十[じゅう]時[じ]～午後[ごご]三[さん]時[じ]\n工事[こうじ]の前[まえ]に、飲[の]み水[みず]やトイレ用[よう]の水[みず]をご用意[ようい]ください。\n工事[こうじ]が終[お]わったあと、しばらく水[みず]が濁[にご]ることがありますが、少[すこ]し流[なが]せばきれいになります。\nあおば管理[かんり]会社[かいしゃ]", "a3": "株式会社[かぶしきがいしゃ]あさひ食品[しょくひん]\n営業[えいぎょう]部[ぶ]　木村[きむら]様[さま]\nいつもお世話[せわ]になっております。\nことり出版[しゅっぱん]の中村[なかむら]です。\n来週[らいしゅう]の水曜日[すいようび]にお約束[やくそく]していた打[う]ち合[あ]わせですが、こちらの都合[つごう]で大変[たいへん]申[もう]し訳[わけ]ございませんが、木曜日[もくようび]の同[おな]じ時間[じかん]に変更[へんこう]していただけないでしょうか。\n場所[ばしょ]は変[か]わらず、御社[おんしゃ]の会議[かいぎ]室[しつ]でお願[ねが]いいたします。\nご都合[つごう]が悪[わる]い場合[ばあい]は、ご連絡[れんらく]いただけますと幸[さいわ]いです。\nことり出版[しゅっぱん]　編集[へんしゅう]部[ぶ]　中村[なかむら]", "a4": "＜一[いち]年生[ねんせい]の保護[ほご]者[しゃ]の皆様[みなさま]へ＞\n来週[らいしゅう]の金曜日[きんようび]に、一[いち]年生[ねんせい]は動物[どうぶつ]園[えん]へ遠足[えんそく]に行[い]きます。\n当日[とうじつ]は、八[はち]時[じ]二十分[にじゅっぷん]までに学校[がっこう]に来[き]てください。\nお弁当[べんとう]と水筒[すいとう]は、各自[かくじ]でご用意[ようい]ください。\n動物[どうぶつ]園[えん]の入場[にゅうじょう]料[りょう]は学校[がっこう]が払[はら]いますので、お金[かね]を持[も]たせる必要[ひつよう]はありません。\n雨[あめ]の場合[ばあい]は遠足[えんそく]を中止[ちゅうし]し、普通[ふつう]の授業[じゅぎょう]を行[おこな]います。\nみなみ小学校[しょうがっこう]　一[いち]年生[ねんせい]担任[たんにん]"}, "zh": {"ex": ["南家具股份有限公司", "業務部　敬啟（御中＝寫給公司或部門，不寫個人名字時用）", "敬啟者（拝啓＝正式書信的開頭語）", "近來天氣持續寒冷，不知您近來可好？（季節問候，與主旨無關）", "我是光貿易股份有限公司進出口部的田中。（寄信人＝光貿易・田中）", "前幾天，我在貴公司的網站上看到了預定明年春天上市的新桌椅型錄。（看到的是「對方」的新產品型錄）", "敝公司目前正在向海外客戶介紹日本的家具，對貴公司的新產品也非常有興趣。（背景說明）", "因此，能否請您在本月底之前，將新產品的型錄和價目表寄到敝公司？（★主旨：請對方寄型錄和價目表）", "敬請多多關照。", "敬上（敬具＝與「拝啓」成對的結尾語）", "光貿易股份有限公司　進出口部　田中一郎"], "a1": ["＜關於您訂購的商品＞", "山本先生／小姐", "這次承蒙您使用櫻花網路商店，非常感謝。", "您訂購的咖啡杯組因為太受歡迎而缺貨，預計會延遲一週左右送達。", "造成您的困擾，深感抱歉。", "如果延遲也沒關係，請就這樣等候即可。", "如果想取消訂單，請在本週五之前回覆這封郵件。", "櫻花網路商店　佐藤"], "a2": ["＜停水通知＞", "住在青葉公寓的各位住戶", "因為水管施工，以下時段將無法用水。", "日期時間：11 月 25 日（三）上午 10 點～下午 3 點", "施工前，請先準備好飲用水和廁所用水。", "施工結束後，水可能會暫時混濁，但稍微放一下水就會變乾淨。", "青葉管理公司"], "a3": ["朝日食品股份有限公司", "業務部　木村先生／小姐", "一直以來承蒙您照顧。（商業書信固定開場白）", "我是小鳥出版的中村。（寄信人＝小鳥出版・中村）", "原本約好下週三的會議，因為我方的關係實在非常抱歉，能否請您改到週四的同一時間？（★主旨：請對方把會議改到週四）", "地點不變，麻煩一樣在貴公司的會議室。", "如果您不方便，請和我聯絡，將不勝感激。", "小鳥出版　編輯部　中村"], "a4": ["＜致一年級的各位家長＞", "下週五，一年級要去動物園遠足。", "當天請在 8 點 20 分之前到校。", "便當和水壺請各自準備。", "動物園的門票由學校支付，所以不需要讓孩子帶錢。", "如果下雨，遠足取消，照常上課。", "南小學　一年級導師"], "読解": ["我每天早上騎腳踏車到車站。", "以前是搭公車，但公車常常誤點，而且早上非常擁擠。", "改騎腳踏車之後，變得能準時到公司了。", "而且因為也能運動，身體狀況也變好了。", "不過下雨天不能騎腳踏車，所以會早一點出門，走路到車站。"], "読解2": ["＜圖書館公告＞", "下個月 1 日到 10 日，圖書館因施工休館。", "這段期間，還書請利用入口旁邊的還書箱。", "但是 CD 和 DVD 可能會壞掉，所以請不要放進還書箱，請在 11 日以後拿到櫃台歸還。", "此外，休館期間也可以在網路上預約書。", "預約的書從 11 日起可以領取。"], "読解3": ["山田先生／小姐", "前幾天您在百忙之中還來幫我搬家，真的非常感謝。", "多虧山田先生開車幫忙，比想像中還早完成。", "新房間現在還堆滿紙箱，但離車站很近，非常方便。", "等整理好之後，請一定要來玩。", "為了答謝，請讓我請您吃晚餐。", "林"], "読解5": ["＜倒垃圾的方式要改了＞", "從四月起，倒垃圾的方式有一部分會改變。", "可燃垃圾和以前一樣，請在星期一和星期四早上 8 點前拿出來。", "塑膠垃圾以前是星期三，四月起改成星期五。", "舊報紙和雜誌請在第二、第四個星期六拿出來。", "另外，想丟大型家具等物品時，需要事先打電話向市公所申請。", "綠市　環境課"], "読解6": ["我到去年為止都熬夜到很晚，早上總是拖到最後一刻才起床。", "開始早起，是因為厭倦了每天連早餐都沒吃就趕去公司的日子。", "現在我六點起床，散步一個小時左右，或是念英文。", "一開始很辛苦，但大約一個月就習慣了。", "不過，我認為並不是每個人都早起就好。", "重要的是找到自己最能專心的時間。"], "読解7": ["主旨：關於星期六的聚餐", "大家好。", "這週六的聚餐，原本預約的店突然公休了。", "所以，地點改到車站前一家叫「櫻花」的餐廳。", "時間不變，晚上七點開始。", "會費原本預定每人三千日圓，但新的店稍微貴一點，所以改成三千五百日圓。", "不能參加的人，請在星期四之前跟我聯絡。", "林"], "読解8": ["聽說最近很多年輕人不擅長打電話。", "他們說有事的時候，傳訊息比打電話輕鬆。", "因為擔心在對方忙的時候打電話，可能會打擾到對方。", "的確，如果是訊息，對方可以在方便的時候讀。", "但是，想道歉或想道謝的時候，直接用聲音說，心意不是更能傳達嗎？"], "読解9": ["＜綠市民游泳池　使用說明＞", "營業時間：上午 9 點～下午 8 點", "公休：每週一（遇國定假日則改為隔天）", "費用（每次）：成人（高中生以上）400 日圓／國中生以下 200 日圓／65 歲以上 200 日圓／未滿 6 歲免費", "回數票：成人 11 次 4,000 日圓", "・進入泳池時，請務必戴泳帽。", "沒帶泳帽的人，櫃台以 100 日圓出借。", "・小學生以下的人，請和大人一起進入。"], "読解10": ["＜櫻花料理教室　10 月課程＞", "A　和食基礎：每週二　10:00～12:00　材料費每次 1,500 日圓", "B　簡單家常菜：每週四　19:00～21:00　材料費每次 1,200 日圓", "C　麵包與點心：每週六　14:00～16:30　材料費每次 2,000 日圓", "D　親子烹飪（小學生和家長）：第 2、第 4 個星期日　10:00～12:00　材料費每組 2,500 日圓", "※ 報名請在參加日的三天前，用電話或官網申請。"], "読解11": ["聽說電車上的遺失物中，雨傘特別多。", "大概是早上就算在下雨，回程時雨停了，就會忘記自己帶著傘吧。", "我上個月也把剛買的傘忘在電車上了。", "打電話詢問車站後馬上就找到了，但到終點站去拿竟然花了一個小時。", "從那以後，搭電車時我都盡量讓傘不離手。", "雖然有點麻煩，但比忘了東西而困擾好多了。"], "読解12": ["我住的城鎮，每個月第一個星期日，鄰居們會聚在一起打掃公園。", "聽說一開始參加的人很少，但自從打掃後安排了大家一起喝茶的時間，參加的人就變多了。", "據說比起打掃本身，很多人是期待和鄰居聊天而來的。", "我也是去年才剛搬來這個城鎮，一個認識的人也沒有。", "但是，自從開始參加打掃之後，在路上碰到時會跟我打招呼的人變多了。", "我覺得這個活動不只讓城鎮變乾淨，也成為連結人與人的活動。"], "読解4": ["最近用手機看書的人越來越多。", "不必帶著很重的書走來走去，晚上不開燈也能看，很方便。", "但是，我還是喜歡紙本書。", "因為紙本書可以享受翻頁的聲音和紙的味道。", "而且，看到讀完的書排在書架上，就能清楚知道自己讀了多少。", "我認為不要只因為方便來選擇，而是選擇適合自己的閱讀方式就好。"]}, "rq": [{"cat": "内容理解（短文）", "pid": "ex", "q": "この手紙を書いた一番の目的は何か。", "o": ["みなみ家具に、新製品のカタログと価格表を送ってもらうこと", "みなみ家具に、ひかり貿易のカタログと価格表を送ること", "みなみ家具のホームページに、新製品の価格表をのせてもらうこと", "ひかり貿易が輸入した家具を、海外のお客様に紹介すること"], "e": "① 正確：「お送りいただけないでしょうか」＝請「對方（みなみ家具）」寄給我們。\n② 主客顛倒：寄東西的是みなみ家具，不是ひかり貿易。\n③ 網站只是「看到型錄的地方」，信裡沒有要求對方在網站刊登價目表。\n④ 輸入／輸出 陷阱：ひかり貿易是把日本家具介紹給「海外」客戶（偏向出口），而且這只是背景，不是寫信的目的。", "fq": "この手紙[てがみ]を書[か]いた一番[いちばん]の目的[もくてき]は何[なに]か。", "fo": ["みなみ家具[かぐ]に、新[しん]製品[せいひん]のカタログと価格[かかく]表[ひょう]を送[おく]ってもらうこと", "みなみ家具[かぐ]に、ひかり貿易[ぼうえき]のカタログと価格[かかく]表[ひょう]を送[おく]ること", "みなみ家具[かぐ]のホームページに、新[しん]製品[せいひん]の価格[かかく]表[ひょう]をのせてもらうこと", "ひかり貿易[ぼうえき]が輸入[ゆにゅう]した家具[かぐ]を、海外[かいがい]のお客様[きゃくさま]に紹介[しょうかい]すること"]}, {"cat": "内容理解（短文）", "pid": "a1", "q": "商品が遅れてもいい山本さんは、どうすればいいか。", "o": ["何もしないで待つ", "金曜日までにメールを返す", "店に電話をする", "もう一度注文する"], "e": "「遅れても問題ない場合は、このままお待ちください」→ 什麼都不用做。回信是「想取消」的人才要做的事（陷阱：把兩種情況對調）。", "fq": "商品[しょうひん]が遅[おく]れてもいい山本[やまもと]さんは、どうすればいいか。", "fo": ["何[なに]もしないで待[ま]つ", "金曜日[きんようび]までにメールを返[かえ]す", "店[みせ]に電話[でんわ]をする", "もう一度[いちど]注文[ちゅうもん]する"]}, {"cat": "内容理解（短文）", "pid": "a2", "q": "このお知らせで、住んでいる人がしなければならないことは何か。", "o": ["工事の前に、水を用意しておく", "工事の間、管理会社に連絡する", "工事のあと、水道管を調べる", "工事が終わるまで、水を流しつづける"], "e": "「工事の前に、飲み水やトイレ用の水をご用意ください」。施工後水混濁「少し流せば」即可，不是一直放水；調查水管的是施工方。", "fq": "このお知[し]らせで、住[す]んでいる人[ひと]がしなければならないことは何[なに]か。", "fo": ["工事[こうじ]の前[まえ]に、水[みず]を用意[ようい]しておく", "工事[こうじ]の間[あいだ]、管理[かんり]会社[かいしゃ]に連絡[れんらく]する", "工事[こうじ]のあと、水道[すいどう]管[かん]を調[しら]べる", "工事[こうじ]が終[お]わるまで、水[みず]を流[なが]しつづける"]}, {"cat": "内容理解（短文）", "pid": "a3", "q": "中村さんが木村さんに頼んでいることは何か。", "o": ["打ち合わせの日を木曜日に変えてもらうこと", "打ち合わせの場所をことり出版に変えてもらうこと", "打ち合わせの時間を水曜日の朝に変えてもらうこと", "木村さんの会社の会議室を予約すること"], "e": "「木曜日の同じ時間に変更していただけないでしょうか」。地點「変わらず、御社（＝木村さんの会社）の会議室」→ 選項②把地點換成寄件方，是主客顛倒陷阱。", "fq": "中村[なかむら]さんが木村[きむら]さんに頼[たの]んでいることは何[なに]か。", "fo": ["打[う]ち合[あ]わせの日[ひ]を木曜日[もくようび]に変[か]えてもらうこと", "打[う]ち合[あ]わせの場所[ばしょ]をことり出版[しゅっぱん]に変[か]えてもらうこと", "打[う]ち合[あ]わせの時間[じかん]を水曜日[すいようび]の朝[あさ]に変[か]えてもらうこと", "木村[きむら]さんの会社[かいしゃ]の会議[かいぎ]室[しつ]を予約[よやく]すること"]}, {"cat": "内容理解（短文）", "pid": "a4", "q": "このお知らせからわかることは何か。", "o": ["子どもにお金を持たせなくてもいい", "お弁当は学校が用意する", "雨の日は、次の週に遠足に行く", "八時二十分に動物園に集まる"], "e": "門票學校付 → 不用帶錢。便當要自備；下雨是取消改上課，不是延期；8:20 是到「学校」不是動物園。", "fq": "このお知[し]らせからわかることは何[なに]か。", "fo": ["子[こ]どもにお金[かね]を持[も]たせなくてもいい", "お弁当[べんとう]は学校[がっこう]が用意[ようい]する", "雨[あめ]の日[ひ]は、次[つぎ]の週[しゅう]に遠足[えんそく]に行[い]く", "八[はち]時[じ]二十分[にじゅっぷん]に動物[どうぶつ]園[えん]に集[あつ]まる"]}]};
+/* ===== Round 10：12/6 N3 特訓、題型攻略、★ 練習、讀解逐句中譯 ===== */
+type R10Star = { q: string; o: string[]; e: string; tag: string; fq: string; fo: string[] };
+type R10Q = { cat: string; pid: string; q: string; o: string[]; e: string; fq: string; fo: string[] };
+type R10Data = { star: R10Star[]; ps: Record<string, string>; zh: Record<string, string[]>; rq: R10Q[] };
+const R10D = R10_JSON as R10Data;
+
+/* ---- 深層連結：goDeep(分頁, 子模式, 捲到的元素 id) ---- */
+const DEEP: Record<string, string> = {};
+let DEEP_SCROLL = "";
+function takeDeep(tab: string): string | null {
+  const v = DEEP[tab];
+  delete DEEP[tab];
+  return v ?? null;
+}
+function goDeep(tab: string, sub?: string, scroll?: string): void {
+  if (sub) DEEP[tab] = sub;
+  DEEP_SCROLL = scroll ?? "";
+  window.dispatchEvent(new CustomEvent("n3go", { detail: { tab, sub } }));
+}
+
+/* ---- 讀解：點句子看中文 ---- */
+function splitSent(s: string): string[] {
+  return (s.match(/[^。\n]+。?|\n/g) ?? []).filter((x: string) => x.trim() !== "");
+}
+const ZH_BY_TEXT: Map<string, string[]> = new Map();
+function zhFor(text: string): string[] | undefined {
+  if (!ZH_BY_TEXT.size) {
+    Object.entries(R10D.zh).forEach(([k, v]: [string, string[]]) => {
+      const src = PASSAGES[k] ?? R10D.ps[k];
+      if (src) ZH_BY_TEXT.set(src, v);
+    });
+  }
+  return ZH_BY_TEXT.get(text);
+}
+function TapPassage(props: { text: string }) {
+  const t = useGrokTheme();
+  const zh = zhFor(props.text);
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  const [all, setAll] = useState(false);
+  if (!zh) return <Rich text={props.text} />;
+  const parts = props.text.match(/[^。\n]+。?|\n/g) ?? [];
+  let si = -1;
+  return (
+    <span>
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6, fontFamily: t.font.family }}>
+        <span style={{ fontSize: 12, color: t.text.secondary, alignSelf: "center" }}>👆 點任一句看中文翻譯</span>
+        <Btn small on={all} label={all ? "隱藏全部中譯" : "顯示全部中譯"} onClick={() => { setAll(!all); setOpen({}); }} />
+      </span>
+      {parts.map((p: string, i: number) => {
+        if (p === "\n") return <br key={i} />;
+        if (!p.trim()) return <span key={i}>{p}</span>;
+        si++;
+        const k = si;
+        const show = all || !!open[k];
+        return (
+          <span key={i}>
+            <span
+              role="button"
+              tabIndex={0}
+              aria-expanded={show}
+              onClick={() => setOpen({ ...open, [k]: !open[k] })}
+              onKeyDown={(e: { key: string }) => { if (e.key === "Enter" || e.key === " ") setOpen({ ...open, [k]: !open[k] }); }}
+              style={{ cursor: "pointer", borderBottom: `1px dashed ${show ? t.fill.accent : t.border.default}`, background: show ? t.fill.accentSubtle : undefined, borderRadius: 3 }}
+            >
+              <RubyText text={p} />
+            </span>
+            {show ? (
+              <span lang="zh-Hant" style={{ display: "block", fontFamily: t.font.family, fontSize: 13, lineHeight: 1.6, color: t.text.accent, margin: "2px 0 6px", whiteSpace: "normal" }}>
+                {zh[k] ?? ""}
+              </span>
+            ) : null}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/* ---- ★ 練習與書信讀解練習（QuizRunner 題目）---- */
+function starQ(i: number): Q {
+  const s = R10D.star[i] as R10Star;
+  return {
+    id: `r10s:${i}`,
+    sec: "mock",
+    cat: "文の組み立て",
+    tags: s.tag ? s.tag.split(",").filter(Boolean) : [],
+    tag: `★ 並べ替え練習 ${i + 1}/${R10D.star.length}`,
+    prompt: `把四個選項排成正確的句子，★ 的位置應放入哪一個？\n${s.fq}`,
+    ja: true,
+    optJa: true,
+    ...mc(s.fo[0] ?? "", s.fo.slice(1)),
+    exp: s.e,
+    review: s.q + "\n" + s.e,
+  };
+}
+function readQ(i: number, pos: number, n: number): Q {
+  const q = R10D.rq[i] as R10Q;
+  return {
+    id: `r10r:${i}`,
+    sec: "mock",
+    cat: q.cat,
+    tag: `書信・通知讀解 ${pos + 1}/${n}`,
+    prompt: `閱讀上面的文章，回答問題。\n${q.fq}`,
+    passage: R10D.ps[q.pid],
+    ja: true,
+    optJa: true,
+    ...mc(q.fo[0] ?? "", q.fo.slice(1)),
+    exp: q.e,
+    review: q.q + "\n" + q.e,
+  };
+}
+function seqGen(n: number, f: (i: number) => Q, start = 0): () => Q {
+  let i = start;
+  return () => f(i++ % n);
+}
+
+/* ---- 書信・敬語小辭典 ---- */
+const LETTER_WORDS: [string, string, string][] = [
+  ["御中", "おんちゅう", "寫給公司、部門（不寫個人名字）時，接在名稱後：営業部 御中"],
+  ["様", "さま", "寫給個人：木村様。「御中」和「様」不會一起用"],
+  ["拝啓／敬具", "はいけい／けいぐ", "正式書信的開頭語／結尾語，成對出現（類似「敬啟者／敬上」）"],
+  ["前略／草々", "ぜんりゃく／そうそう", "省略季節問候時的開頭／結尾（較不正式）"],
+  ["いつもお世話になっております", "いつもおせわになっております", "商業信件固定開場白：一直以來承蒙照顧（不是主旨）"],
+  ["と申します", "ともうします", "「と言います」的謙讓語：我叫…（用來找出寄信人是誰）"],
+  ["拝見する", "はいけんする", "「見る」的謙讓語：（我）拜讀、看到"],
+  ["〜ております", "〜ております", "「〜ています」的謙讓／鄭重說法：弊社は〜を紹介しております"],
+  ["弊社／御社／貴社", "へいしゃ／おんしゃ／きしゃ", "弊社＝我方公司；御社＝貴公司（口語、郵件）；貴社＝貴公司（書面）。看懂誰是誰是解題關鍵"],
+  ["つきましては", "つきましては", "因此、所以（後面通常就是「請求／主旨」）"],
+  ["〜ていただけないでしょうか", "〜ていただけないでしょうか", "能否請您…？（非常客氣的請求；做動作的是「對方」）"],
+  ["お〜いただけますと幸いです", "お〜いただけますとさいわいです", "如果您能…將不勝感激（請求）"],
+  ["〜あてに", "〜あてに", "寄給…：弊社あてにお送りください＝請寄到我們公司"],
+  ["恐れ入りますが", "おそれいりますが", "不好意思、麻煩您（請求前的緩衝語）"],
+  ["誠に申し訳ございません", "まことにもうしわけございません", "非常抱歉（道歉）"],
+  ["ご確認ください／ご連絡ください", "ごかくにんください／ごれんらくください", "請確認／請聯絡（題目常問「要做什麼」）"],
+  ["よろしくお願いいたします", "よろしくおねがいいたします", "敬請關照（結尾客套，不是主旨）"],
+];
+
+/* ---- 題型攻略 ---- */
+type GuideItem = { id: string; t: string; sec: string; n: string; what: string; how: string[]; trap: string; go: [string, string, string?, string?][] };
+const GUIDE: GuideItem[] = [
+  { id: "kanji", t: "漢字読み（漢字讀音）", sec: "文字・語彙", n: "8 題", what: "畫線的漢字詞怎麼讀。", how: ["先在心裡念一次，不看選項就決定讀音", "再比對：清音／濁音（は・ば）、長音（こう・こ）、促音（っ）、拗音（きょ・きよ）", "音讀詞（兩個漢字）多為音讀；送假名的動詞、形容詞多為訓讀"], trap: "選項通常只差一個假名：ゅ／ょ、う的有無、っ的有無。", go: [["📝 漢字読み 練習", "mock", "prac:漢字読み"], ["字 漢字讀音測驗", "kanji", "quiz:1-100"]] },
+  { id: "hyoki", t: "表記（假名→漢字）", sec: "文字・語彙", n: "6 題", what: "畫線的平假名詞用哪個漢字寫。", how: ["先想意思，再找字", "注意形近字（間／問／聞）與同音字（会う／合う）", "動詞看送假名是否正確"], trap: "部件只差一點的形近字。", go: [["📝 表記 練習", "mock", "prac:表記"], ["字 讀音→寫法", "kanji", "quiz:1-100"]] },
+  { id: "gokei", t: "語形成（N3 沒有）", sec: "文字・語彙", n: "0 題", what: "N3 不考「語形成」（那是 N2 以上的題型），可以略過。", how: ["把時間花在 文脈規定 和 言い換え類義"], trap: "—", go: [] },
+  { id: "bunmyaku", t: "文脈規定（依前後文選詞）", sec: "文字・語彙", n: "11 題", what: "（　）裡放哪個詞最合適。", how: ["先讀整句，找出和空格搭配的詞（名詞＋動詞的固定搭配，例：ネクタイを しめる）", "副詞看語氣：わざわざ（特地）、ぜひ（務必）", "四個選項通常同詞性、意思相近，用「搭配」決定"], trap: "意思對但搭配錯（例：傘を「はく」）。", go: [["📝 文脈規定 練習", "mock", "prac:文脈規定"], ["📖 單字 SRS", "vocab", "srs"]] },
+  { id: "iikae", t: "言い換え類義（換句話說）", sec: "文字・語彙", n: "5 題", what: "選意思最接近畫線部分的選項。", how: ["先把畫線詞翻成中文", "把每個選項代回句子，看意思是否不變", "常考：副詞（たびたび＝何度も）、慣用語（手間がかかる）"], trap: "相關但不同義的詞（くたびれた ≠ 眠くなった）。", go: [["📝 言い換え 練習", "mock", "prac:言い換え類義"]] },
+  { id: "yoho", t: "用法（詞的正確用法）", sec: "文字・語彙", n: "5 題", what: "四個句子中，哪一句用法正確。", how: ["先確認詞的意思與詞性（自動詞／他動詞）", "錯的句子常是「意思像但用法不對」，代成中文就發現怪", "名詞題注意搭配的動詞（世話を する）"], trap: "把相似詞的用法套進來（止む vs 止まる）。", go: [["📝 用法 練習", "mock", "prac:用法"]] },
+  { id: "bunpo", t: "文法形式の判断（文法填空）", sec: "文法", n: "13 題", what: "（　）中放入哪個文法最合適。", how: ["先看空格前面的接續形：辭書形／ます形／た形／名詞", "再看後文的語氣：推測、原因、逆接、願望", "易混文法用「比較」功能對照（ために／ように）"], trap: "接續不對（名詞＋ように ✗）。", go: [["📝 文法形式 練習", "mock", "prac:文法形式"], ["📐 文法填空", "grammar", "fill"], ["⚖️ 易混文法比較", "grammar", "cmp"]] },
+  { id: "star", t: "文の組み立て（並べ替え・★）", sec: "文法", n: "5 題", what: "四個片段排成正確句子，回答 ★ 位置的片段。", how: ["見下方完整攻略與例題"], trap: "排好後要回答「★ 的那一格」，不是第一格。", go: [["★ 並べ替え練習（21 題）", "mock", "guide", "g-star"]] },
+  { id: "bunsho", t: "文章の文法（文章中的文法）", sec: "文法", n: "5 題", what: "閱讀一篇短文，選出放進（1）～（5）的詞或文法。", how: ["看空格前後兩句的關係：順接（それで）、逆接（しかし）、補充（それに）", "注意文章的視角：寫作者自己 → くれる／もらう 的方向", "文體要一致（です・ます 體 或 だ 體）"], trap: "連接詞方向相反。", go: [["📚 第1–10回 模考", "mock", "sets"]] },
+  { id: "tanbun", t: "内容理解（短文）", sec: "読解", n: "4 篇", what: "約 200 字的書信、通知、便條、短文，每篇 1 題。", how: ["見下方完整攻略（書信例題）"], trap: "主客顛倒、相反詞（輸入／輸出）。", go: [["✉️ 書信讀解攻略", "mock", "guide", "g-read"]] },
+  { id: "chubun", t: "内容理解（中文）", sec: "読解", n: "2 篇×3 題", what: "約 350 字的隨筆或說明文，問畫線部分的理由、意思。", how: ["先看題目，標出畫線①②③", "答案通常就在畫線部分的前後一兩句", "「なぜか」找「から／ので／ため」"], trap: "選項內容在文中出現過，但不是畫線部分的答案。", go: [["📝 読解 練習", "mock", "prac:読解"]] },
+  { id: "chobun", t: "内容理解（長文）", sec: "読解", n: "1 篇×4 題", what: "約 550 字，問筆者的想法、主張。", how: ["題目順序 ≈ 文章順序", "筆者主張多在最後一段（〜と思う／〜のではないだろうか）", "時間不夠時先讀每段第一句與最後一段"], trap: "一般論 vs 筆者自己的想法。", go: [["📚 第1–10回 模考", "mock", "sets"]] },
+  { id: "joho", t: "情報検索（資訊檢索）", sec: "読解", n: "1 篇×2 題", what: "廣告、時刻表、報名表，找符合條件的資訊。", how: ["先讀題目的條件（星期、時間、人數、年齡）", "在表格中逐一刪去不符合的", "注意「※」「・」的附加條件（假日加價、需預約）"], trap: "漏看附註（土日料金、〜まで）。", go: [["📚 第1–10回 模考", "mock", "sets"]] },
+  { id: "kadai", t: "聴解：課題理解", sec: "聴解", n: "6 題", what: "聽對話，判斷「接下來先做什麼」。", how: ["先看問題與選項（播放前有時間）", "注意「まず」「その前に」「〜てから」", "被否定的提議要刪掉（〜はいいよ、〜なくていい）"], trap: "對話中先提到的事 ≠ 先做的事。", go: [["🎧 課題理解", "listen", "k"]] },
+  { id: "point", t: "聴解：ポイント理解", sec: "聴解", n: "6 題", what: "聽對話，抓理由或重點。", how: ["先看問題：問「どうして」就等「〜から／実は」", "前面說的多半是被否定的選項（でも、〜わけじゃない）", "「いちばん〜」後面才是答案"], trap: "對話中提到的四個選項都出現過。", go: [["🎧 ポイント理解", "listen", "p"]] },
+  { id: "gaiyo", t: "聴解：概要理解", sec: "聴解", n: "3 題", what: "聽一段話（沒有先給題目），回答主旨或說話者的想法。", how: ["邊聽邊記關鍵字", "注意「でも」「ただ」之後的話", "主旨通常在開頭或結尾"], trap: "只聽到一個細節就選。", go: [["📚 模考聴解（概要理解）", "mock", "sets"]] },
+  { id: "hatsuwa", t: "聴解：発話表現", sec: "聴解", n: "4 題", what: "看情境（正式考試有圖），選這時候該說的話。", how: ["判斷是「請求、道歉、道謝、提議、問候」哪一種", "對長輩、上司用敬語：お〜しましょうか（提議幫忙）", "〜てくれてありがとう（對方為我做）"], trap: "授受方向相反（〜てあげて ✗）。", go: [["📚 模考聴解（発話表現）", "mock", "sets"]] },
+  { id: "sokuji", t: "聴解：即時応答", sec: "聴解", n: "9 題", what: "聽一句話，選最適當的回應（沒有文字）。", how: ["先判斷對方是在：請求／邀約／詢問／道歉／稱讚", "時態要對：問「何時來」→ 回答時間", "回應常用：いいですよ、おかげさまで、いえいえ"], trap: "選項重複對方的詞但答非所問。", go: [["🎧 即時応答", "listen", "r"]] },
+];
+function GuideLinks(props: { go: [string, string, string?, string?][] }) {
+  if (!props.go.length) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      {props.go.map(([l, tb, sub, sc]: [string, string, string?, string?]) => (
+        <Btn key={l} small kind="primary" label={l} onClick={() => goDeep(tb, sub, sc)} />
+      ))}
+    </div>
+  );
+}
+function Sum(props: { children: ReactNode }) {
+  const t = useGrokTheme();
+  return <summary style={{ cursor: "pointer", minHeight: 44, display: "flex", alignItems: "center", fontWeight: 600, fontSize: 15, color: t.text.primary, listStylePosition: "inside" }}>{props.children}</summary>;
+}
+function ExamGuide() {
+  const t = useGrokTheme();
+  const [starOn, setStarOn] = useState(false);
+  const [readOn, setReadOn] = useState(false);
+  const [pick, setPick] = useState<number | null>(null);
+  const sStep: CSSProperties = { background: t.bg.subtle, borderRadius: 8, padding: "8px 10px", fontSize: 14, lineHeight: 1.8 };
+  const ja: CSSProperties = { fontFamily: JA_FONT };
+  const ex = R10D.rq.find((q: R10Q) => q.pid === "ex") as R10Q;
+  const exOpts = ex.fo;
+  const why = ex.e.split("\n");
+  const others = R10D.rq.map((_: R10Q, i: number) => i).filter((i: number) => R10D.rq[i]?.pid !== "ex");
+  const readGen = useMemo(() => seqGen(others.length, (i: number) => readQ(others[i] ?? 0, i, others.length)), []);
+  const starGen = useMemo(() => seqGen(R10D.star.length, starQ), []);
+  useEffect(() => {
+    if (DEEP_SCROLL === "g-star") setStarOn(true);
+  }, []);
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <Card title="🧭 N3 題型攻略">
+        <Note>N3 三科：言語知識（文字・語彙）30 分、言語知識（文法）・読解 70 分、聴解 40 分。點每個題型看「怎麼解、常見陷阱」，再用按鈕直接去練。</Note>
+        <PassNote />
+      </Card>
+      {(["文字・語彙", "文法", "読解", "聴解"] as string[]).map((sec: string) => (
+        <Card key={sec} title={`${sec === "文字・語彙" ? "🈶" : sec === "文法" ? "📐" : sec === "読解" ? "📖" : "🎧"} ${sec}`}>
+          <div style={{ display: "grid", gap: 4 }}>
+            {GUIDE.filter((g: GuideItem) => g.sec === sec).map((g: GuideItem) => (
+              <details key={g.id} style={{ borderTop: `1px solid ${t.border.subtle}`, padding: "2px 0" }}>
+                <Sum>{g.t}<span style={{ fontWeight: 400, fontSize: 12, color: t.text.secondary, marginLeft: 6 }}>{g.n}</span></Sum>
+                <div style={{ fontSize: 14, lineHeight: 1.7, paddingBottom: 8 }}>
+                  <div>{g.what}</div>
+                  <ol style={{ margin: "6px 0", paddingLeft: 20 }}>{g.how.map((h: string) => <li key={h}>{h}</li>)}</ol>
+                  <div style={{ color: t.text.danger, fontSize: 13 }}>⚠️ 常見陷阱：{g.trap}</div>
+                  <GuideLinks go={g.go} />
+                </div>
+              </details>
+            ))}
+          </div>
+        </Card>
+      ))}
+      <div id="g-star" />
+      <Card title="★ 文の組み立て（並べ替え）完整攻略">
+        <div style={{ display: "grid", gap: 8, fontSize: 14, lineHeight: 1.8 }}>
+          <div>官網範例（jlpt.jp 公開的樣題）：</div>
+          <div lang="ja" style={{ ...ja, fontSize: 17, background: t.bg.subtle, borderRadius: 8, padding: 10 }}>
+            <RubyText text="先週[せんしゅう] ＿＿ ＿＿ ★ ＿＿ から、行[い]ってみませんか。" />
+            <div style={{ fontSize: 15, marginTop: 4 }}>1 ばかりの　2 レストランが　3 オープンした　4 ある</div>
+          </div>
+          <div style={sStep}><b>步驟 1｜先看空格前後</b>：前面是「先週」（時間），後面是「から、行ってみませんか」（因為…要不要去看看）。所以四格要組成「理由」，最後接「から」。</div>
+          <div style={sStep}><b>步驟 2｜找固定搭配</b>：<span style={ja}>「オープンした」＋「ばかりの」</span>＝<b>Vた＋ばかり</b>（剛…）。「ばかりの」後面一定接<b>名詞</b> → <span style={ja}>ばかりの レストラン</span>。</div>
+          <div style={sStep}><b>步驟 3｜名詞修飾（關係子句）</b>：<span style={ja}>「先週オープンしたばかりの」</span>整段修飾<span style={ja}>「レストラン」</span>＝上週剛開幕的餐廳。</div>
+          <div style={sStep}><b>步驟 4｜剩下的接在後面</b>：<span style={ja}>「レストランが」＋「ある」</span>＝<b>Nがある</b>（有…）；<span style={ja}>「ある」＋「から」</span>＝因為有…（から 表理由）。</div>
+          <div style={{ ...sStep, background: t.fill.successSubtle }}>
+            <b>完成</b>：<span lang="ja" style={ja}><RubyText text="先週[せんしゅう]オープンしたばかりのレストランがあるから、行[い]ってみませんか。" /></span>
+            <br />順序 <b>3 → 1 → 2 → 4</b>；★ 在第 3 格 → <b>答案 2「レストランが」</b>
+            <br />中譯：有一家上週剛開幕的餐廳，要不要去看看？
+          </div>
+          <div style={sStep}><b>★ 題萬用 5 步</b>：① 看空格前後決定句型 ② 先湊「固定搭配」（Vた＋ばかり、～ために、～ように） ③ 修飾語放名詞前（形容詞・連體修飾） ④ 助詞看接續（が／を／に 接名詞，から／ので 接句尾） ⑤ <b>寫下 1–4 的順序，再數到 ★ 那一格</b>（最常見的失分：答成第一格）。</div>
+          <Btn kind="primary" label={starOn ? "收起 ★ 練習" : `▶ 開始 ★ 並べ替え練習（${R10D.star.length} 題原創）`} onClick={() => setStarOn(!starOn)} />
+        </div>
+      </Card>
+      {starOn ? <QuizRunner key="r10star" gen={starGen} total={R10D.star.length} /> : null}
+      <div id="g-read" />
+      <Card title="✉️ 内容理解（短文）書信題完整攻略">
+        <div style={{ display: "grid", gap: 8, fontSize: 14, lineHeight: 1.8 }}>
+          <div style={sStep}><b>方法</b>：① <b>先看問題</b>（目的？要做什麼？）② 找出<b>誰寫給誰</b>：開頭的「〇〇 御中／様」是收件人，「と申します」和最後的署名是寄件人 ③ 標出<b>每一方做了什麼</b>（看到、想要、請求）④ 主旨多在「つきましては／〜ていただけないでしょうか」那一句 ⑤ 逐一刪去選項。</div>
+          <div style={{ ...sStep, color: t.text.danger }}><b>常見陷阱</b>：主詞對調（誰寄給誰）、相反詞（輸入／輸出、借りる／貸す、送る／送ってもらう）、只出現在背景說明的內容。</div>
+          <div>例題（原創，仿官方書信題形式）：</div>
+          <div lang="ja" style={{ fontFamily: JA_FONT, background: t.bg.subtle, borderRadius: 8, padding: 12, lineHeight: 2, fontSize: 15, whiteSpace: "pre-line" }}>
+            <TapPassage text={R10D.ps.ex ?? ""} />
+          </div>
+          <div lang="ja" style={{ ...ja, fontWeight: 600 }}><RubyText text={ex.fq} /></div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {exOpts.map((o: string, i: number) => {
+              const ok = i === 0;
+              const sel = pick === i;
+              return (
+                <button key={i} type="button" onClick={() => setPick(i)} style={{ font: "inherit", textAlign: "left", cursor: "pointer", minHeight: 44, padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${pick !== null && ok ? t.text.success : sel ? t.text.danger : t.border.default}`, background: pick !== null && ok ? t.fill.successSubtle : sel ? t.fill.dangerSubtle : t.bg.base, color: t.text.primary }}>
+                  <span lang="ja" style={ja}>{i + 1}　<RubyText text={o} /></span>
+                  {pick !== null ? <span style={{ display: "block", fontSize: 13, color: ok ? t.text.success : t.text.danger, marginTop: 2 }}>{why[i] ?? ""}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+          {pick === null ? <Note>先自己選一個，再看每個選項的刪去理由。（正式考試選項順序會打亂，這裡正解是 1）</Note> : null}
+        </div>
+      </Card>
+      <Card title="📒 書信・敬語小辭典">
+        <div style={{ display: "grid", gap: 6 }}>
+          {LETTER_WORDS.map(([w, r, m]: [string, string, string]) => (
+            <div key={w} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 6, alignItems: "center", borderTop: `1px solid ${t.border.subtle}`, paddingTop: 6 }}>
+              <div style={{ minWidth: 0 }}>
+                <div lang="ja" style={{ ...ja, fontSize: 16, fontWeight: 600, overflowWrap: "anywhere" }}>{w}<span style={{ fontSize: 12, fontWeight: 400, color: t.text.secondary, marginLeft: 6 }}>{r}</span></div>
+                <div style={{ fontSize: 13, color: t.text.secondary, lineHeight: 1.6 }}>{m}</div>
+              </div>
+              <Speak text={w.split("／")[0] ?? w} />
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Btn kind="primary" label={readOn ? "收起書信讀解練習" : `▶ 書信・通知讀解練習（${others.length} 題原創，可點句看中文）`} onClick={() => setReadOn(!readOn)} />
+      {readOn ? <QuizRunner key="r10read" gen={readGen} total={others.length} /> : null}
+    </div>
+  );
+}
+
+/* ---- 合格標準 ---- */
+function PassNote() {
+  const t = useGrokTheme();
+  return (
+    <div style={{ marginTop: 8, background: t.fill.warningSubtle, borderRadius: 8, padding: "8px 10px", fontSize: 13, lineHeight: 1.7 }}>
+      <b>🎯 N3 合格標準</b>：總分 <b>≥ 95 / 180</b>，而且三個得分區<b>每一區都要 ≥ 19 / 60</b>：
+      言語知識（文字・語彙・文法）／読解／聴解。任何一區未滿 19 分，總分再高也不合格。
+    </div>
+  );
+}
+
+/* ---- 12/6 N3 特訓：16 天計畫 ---- */
+type BTask = { t: string; tab: string; sub?: string; sc?: string };
+type BDay = { d: string; title: string; tasks: BTask[]; tip?: string };
+const KANA10: BTask = { t: "🔤 假名 10 分：⏰ 複習佇列 → 🎯 最弱 5 字", tab: "kana", sub: "srs" };
+const KANA10B: BTask = { t: "🔤 假名 10 分：片假名讀詞（每天保溫）", tab: "kana", sub: "kword" };
+const GR = (a: number, b: number): BTask => ({ t: `📐 文法 第 ${a}–${b} 個：看意思、接續、例句（點 🔊 跟讀）`, tab: "grammar", sub: `list:${a}-${b}` });
+const GFR = (a: number, b: number): BTask => ({ t: `✏️ 文法填空：只練第 ${a}–${b} 個，答對 8 成以上`, tab: "grammar", sub: `fill:${a}-${b}` });
+const VS: BTask = { t: "📖 單字 SRS：新字 + 到期複習（約 20 分）", tab: "vocab", sub: "srs" };
+const BKJ = (r: string, l: string): BTask => ({ t: `字 漢字 ${l}：看讀音 → 測驗`, tab: "kanji", sub: `quiz:${r}` });
+const LS = (k: string, l: string): BTask => ({ t: `🎧 聽力 ${l} 15 題`, tab: "listen", sub: k });
+const MK = (s: string): BTask => ({ t: `📝 ${s} 分項練習 15 題`, tab: "mock", sub: `prac:${s}` });
+const MA: BTask = { t: "🔍 錯題分析：看最弱 10 題 → 一鍵針對練習", tab: "review", sc: "mistake-analysis" };
+const BOOT: BDay[] = [
+  { d: "2026-11-21", title: "片假名 ア～ナ行 100%", tasks: [{ t: "🔤 五十音表：片假名 ア～ナ行 點字聽發音", tab: "kana", sub: "table" }, { t: "🔤 片假名記憶法（形狀聯想）", tab: "kana", sub: "mnemo" }, { t: "🔤 認讀測驗：片假名 ア～ナ行 直到 100%", tab: "kana", sub: "quiz:kata:a,ka,sa,ta,na" }, { t: "🔤 易混淆字（シ／ツ、ソ／ン）", tab: "kana", sub: "conf" }, { t: "🧭 先讀題型攻略（知道考什麼）", tab: "mock", sub: "guide" }], tip: "片假名先求「看到就認得」，不用急著寫。" },
+  { d: "2026-11-22", title: "片假名 ハ～ン行＋濁音・拗音", tasks: [{ t: "🔤 認讀測驗：片假名 ハ～ン行 直到 100%", tab: "kana", sub: "quiz:kata:ha,ma,ya,ra,wa,n" }, { t: "🔤 濁音・拗音（ガ・キャ…）", tab: "kana", sub: "voice" }, { t: "🔤 外來音 ファ・ティ", tab: "kana", sub: "ext" }, { t: "🔤 外來語片假名（コーヒー、レストラン…）", tab: "kana", sub: "loan" }, KANA10B] },
+  { d: "2026-11-23", title: "平・片假名全部 100%", tasks: [{ t: "🔤 認讀測驗：混合（平＋片）全部行", tab: "kana", sub: "quiz:mix:a,ka,sa,ta,na,ha,ma,ya,ra,wa,n" }, { t: "🔤 促音・長音（おばさん／おばあさん）", tab: "kana", sub: "len" }, { t: "🔤 聽音選假名", tab: "kana", sub: "klisten" }, { t: "🔤 平↔片配對", tab: "kana", sub: "match" }, { t: "👾 魔王關（全部假名綜合）", tab: "kana", sub: "boss" }, { t: "📊 掌握度：每一行都要綠色", tab: "kana", sub: "dash" }] },
+  { d: "2026-11-24", title: "文法 1–15＋★ 並べ替え技巧", tasks: [KANA10, GR(1, 15), GFR(1, 15), { t: "★ 並べ替え攻略＋21 題練習", tab: "mock", sub: "guide", sc: "g-star" }, VS, BKJ("1-100", "1–100"), LS("r", "即時応答")] },
+  { d: "2026-11-25", title: "文法 16–30＋文脈規定", tasks: [KANA10B, GR(16, 30), GFR(16, 30), MK("文脈規定"), VS, BKJ("1-100", "1–100（複習）"), LS("k", "課題理解")] },
+  { d: "2026-11-26", title: "文法 31–45＋讀解書信", tasks: [KANA10, GR(31, 45), GFR(31, 45), { t: "✉️ 書信讀解攻略＋敬語小辭典", tab: "mock", sub: "guide", sc: "g-read" }, MK("読解"), VS, BKJ("101-200", "101–200"), LS("p", "ポイント理解")] },
+  { d: "2026-11-27", title: "文法 46–60＋言い換え・用法", tasks: [KANA10B, GR(46, 60), GFR(46, 60), MK("言い換え類義"), MK("用法"), VS, BKJ("201-300", "201–300"), LS("r", "即時応答")] },
+  { d: "2026-11-28", title: "🏁 第1回 完整模考", tasks: [KANA10, { t: "📝 第1回 模考（3 節計時，照正式時間）", tab: "mock", sub: "sets" }, MA, { t: "📕 錯題本：翻卡複習今天的錯題", tab: "review" }], tip: "模考時不要查答案，照正式時間做完再看成績單。" },
+  { d: "2026-11-29", title: "文法 61–75＋表記", tasks: [KANA10B, GR(61, 75), GFR(61, 75), MK("表記"), MK("文の組み立て"), VS, BKJ("301-367", "301–367"), LS("k", "課題理解")] },
+  { d: "2026-11-30", title: "文法 76–90＋漢字読み", tasks: [KANA10, GR(76, 90), GFR(76, 90), MK("漢字読み"), VS, BKJ("weak", "答錯過的"), LS("p", "ポイント理解")] },
+  { d: "2026-12-01", title: "文法 91–105＋易混文法", tasks: [KANA10B, GR(91, 105), GFR(91, 105), { t: "⚖️ 易混文法比較", tab: "grammar", sub: "cmp" }, MK("文法形式"), VS, BKJ("weak", "答錯過的"), LS("r", "即時応答")] },
+  { d: "2026-12-02", title: "🏁 第2回 完整模考", tasks: [KANA10, { t: "📝 第2回 模考（3 節計時）", tab: "mock", sub: "sets" }, MA, { t: "📕 錯題本：翻卡複習", tab: "review" }] },
+  { d: "2026-12-03", title: "文法 106–120＋弱點", tasks: [KANA10B, GR(106, 120), GFR(106, 120), MA, { t: "★ 並べ替え練習再做一輪", tab: "mock", sub: "guide", sc: "g-star" }, VS, LS("k", "課題理解")] },
+  { d: "2026-12-04", title: "🏁 第3回 完整模考", tasks: [KANA10, { t: "📝 第3回 模考（3 節計時）", tab: "mock", sub: "sets" }, MA, { t: "📕 錯題本：翻卡複習", tab: "review" }] },
+  { d: "2026-12-05", title: "只複習錯題＋早睡", tasks: [KANA10, { t: "📕 錯題本：翻卡把所有錯題看一遍", tab: "review" }, MA, { t: "📒 書信・敬語小辭典 看一遍", tab: "mock", sub: "guide", sc: "g-read" }, { t: "🧭 題型攻略 看一遍（記住每科時間）", tab: "mock", sub: "guide" }], tip: "不做新題目。準備准考證、身分證、鉛筆、橡皮擦、手錶（不能用手機看時間），早點睡。" },
+  { d: "2026-12-06", title: "🎌 考試當天", tasks: [{ t: "🔤 出門前 5 分：片假名讀詞暖身", tab: "kana", sub: "kword" }], tip: "早點到考場。文字・語彙 30 分：不會的先猜、不要空白（答錯不扣分）。文法・読解 70 分：讀解約留 40 分，情報検索 先看題目。聴解 40 分：每題播放前先看選項；聽不懂就馬上選一個，專心聽下一題。三科每科都要 ≥19 分！" },
+];
+type BootSt = { done: Record<string, number>; open: boolean };
+function bootLoad(): BootSt {
+  try {
+    const v = JSON.parse(localStorage.getItem("n3boot") ?? "null");
+    if (v && typeof v === "object") return { done: v.done ?? {}, open: v.open !== false };
+  } catch (_e) {
+    /* 無法讀取 */
+  }
+  return { done: {}, open: true };
+}
+function bootSave(s: BootSt): void {
+  try {
+    localStorage.setItem("n3boot", JSON.stringify(s));
+  } catch (_e) {
+    /* 無法儲存 */
+  }
+}
+function bootToday(): number {
+  const td = today();
+  const i = BOOT.findIndex((d: BDay) => d.d === td);
+  if (i >= 0) return i;
+  return td < (BOOT[0]?.d ?? "") ? -1 : BOOT.length;
+}
+function Bootcamp(props: { home: boolean }) {
+  const t = useGrokTheme();
+  const [st, setSt] = useState<BootSt>(bootLoad);
+  const [all, setAll] = useState(false);
+  const [sel, setSel] = useState<number | null>(null);
+  const [peek, setPeek] = useState(false);
+  const ti = bootToday();
+  const cur = sel ?? Math.max(0, Math.min(ti, BOOT.length - 1));
+  const day = BOOT[cur] as BDay;
+  const upd = (s: BootSt) => { setSt(s); bootSave(s); };
+  const open = props.home ? st.open : peek;
+  const toggle = (k: string) => { const d = { ...st.done }; if (d[k]) delete d[k]; else d[k] = Date.now(); upd({ ...st, done: d }); };
+  const cnt = (i: number) => (BOOT[i]?.tasks ?? []).filter((_: BTask, j: number) => st.done[`${i}-${j}`]).length;
+  const totalT = BOOT.reduce((a: number, d: BDay) => a + d.tasks.length, 0);
+  const totalD = Object.keys(st.done).length;
+  const daysLeft = Math.round((new Date(2026, 11, 6).getTime() - new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime()) / 86400000);
+  const md = (s: string) => `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}`;
+  const run = (k: string, x: BTask) => {
+    if (!st.done[k]) toggle(k);
+    if (x.tab === "review" && !x.sc) DEEP_SCROLL = "";
+    goDeep(x.tab, x.sub, x.sc);
+  };
+  return (
+    <div id="bootcamp" style={{ background: t.bg.elevated, border: `2px solid ${t.fill.accent}`, borderRadius: 12, padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700, fontSize: 17 }}>🔥 12/6 N3 特訓</div>
+        <div style={{ fontSize: 13, color: t.text.secondary }}>{daysLeft > 0 ? `距離考試 ${daysLeft} 天` : daysLeft === 0 ? "今天考試，加油！" : "考試已結束"}・完成 {totalD}/{totalT}</div>
+      </div>
+      <div style={{ marginTop: 8 }}><Bar v={totalT ? totalD / totalT : 0} color={t.text.success} /></div>
+      {ti < 0 ? <Note>特訓從 11/21 開始，可以先看第 1 天的任務。</Note> : null}
+      <button type="button" aria-expanded={open} onClick={() => (props.home ? upd({ ...st, open: !st.open }) : setPeek(!peek))} style={{ ...btnStyle(t, "plain", false, true), width: "100%", justifyContent: "space-between", marginTop: 8, borderRadius: 10 }}>
+        <span style={{ whiteSpace: "normal", textAlign: "left" }}><b>第 {cur + 1} 天（{md(day.d)}）{cur === ti ? "・今天" : ""}</b>　{day.title}</span>
+        <span>{cnt(cur)}/{day.tasks.length} {open ? "▲" : "▼"}</span>
+      </button>
+      {open ? (
+        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+          {day.tasks.map((x: BTask, j: number) => {
+            const k = `${cur}-${j}`;
+            const done = !!st.done[k];
+            return (
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "44px minmax(0,1fr)", gap: 6, alignItems: "stretch" }}>
+                <button type="button" role="checkbox" aria-checked={done} aria-label={`完成：${x.t}`} onClick={() => toggle(k)} style={{ font: "inherit", fontSize: 20, minHeight: 44, minWidth: 44, borderRadius: 10, cursor: "pointer", border: `1.5px solid ${done ? t.text.success : t.border.default}`, background: done ? t.fill.successSubtle : t.bg.base, color: t.text.success }}>{done ? "✓" : ""}</button>
+                <button type="button" onClick={() => run(k, x)} style={{ font: "inherit", fontSize: 14, textAlign: "left", minHeight: 44, padding: "8px 12px", borderRadius: 10, cursor: "pointer", border: `1px solid ${t.border.subtle}`, background: t.bg.base, color: done ? t.text.secondary : t.text.primary, textDecoration: done ? "line-through" : undefined, lineHeight: 1.5 }}>{x.t} <span style={{ color: t.text.accent }}>›</span></button>
+              </div>
+            );
+          })}
+          {day.tip ? <div style={{ fontSize: 13, lineHeight: 1.7, background: t.bg.subtle, borderRadius: 8, padding: "8px 10px" }}>💡 {day.tip}</div> : null}
+          <PassNote />
+          <Btn small label={all ? "收起 16 天計畫" : "📅 看 16 天完整計畫"} onClick={() => setAll(!all)} />
+          {all ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6 }}>
+              {BOOT.map((d: BDay, i: number) => {
+                const c = cnt(i), n = d.tasks.length;
+                return (
+                  <button key={d.d} type="button" aria-pressed={i === cur} onClick={() => { setSel(i === ti ? null : i); window.document.getElementById("bootcamp")?.scrollIntoView({ block: "start" }); }} style={{ font: "inherit", fontSize: 13, textAlign: "left", minHeight: 52, padding: "6px 10px", borderRadius: 10, cursor: "pointer", border: `${i === ti ? 2 : 1}px solid ${i === ti ? t.fill.accent : t.border.subtle}`, background: i === cur ? t.fill.accentSubtle : c >= n ? t.fill.successSubtle : t.bg.base, color: t.text.primary, lineHeight: 1.4 }}>
+                    <b>{md(d.d)} 第 {i + 1} 天{i === ti ? "・今天" : ""}</b>
+                    <span style={{ display: "block", color: t.text.secondary }}>{d.title}</span>
+                    <span style={{ display: "block", fontSize: 12, color: c >= n ? t.text.success : t.text.secondary }}>{c >= n ? "✅ 完成" : `${c}/${n}`}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 // 為模考題目文字加上假名（kuromoji），輸出 exams/furi_raw.json：{ key: 註音後文字 }
 const kuromoji = require('kuromoji');
 const fs = require('fs');
-const items = JSON.parse(fs.readFileSync('exams/furi_in.json', 'utf8')); // [[key, text, mode]]
+const items = JSON.parse(fs.readFileSync(process.env.FURI_IN || 'exams/furi_in.json', 'utf8')); // [[key, text, mode]]
 const KRs = '[\\u3400-\\u9fff々〆ヶ]+';
 const isK = c => /[\u3400-\u9fff々〆ヶ]/.test(c);
 const hira = s => s.replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
@@ -46,6 +46,6 @@ kuromoji.builder({ dicPath: 'node_modules/kuromoji/dict' }).build((e, tk) => {
     res += s.slice(last);
     out[key] = res;
   }
-  fs.writeFileSync('exams/furi_raw.json', JSON.stringify(out, null, 0));
+  fs.writeFileSync(process.env.FURI_OUT || 'exams/furi_raw.json', JSON.stringify(out, null, 0));
   console.log('annotated', Object.keys(out).length, 'unknown', Object.values(out).filter(x => x.includes('[?]')).length);
 });

@@ -433,3 +433,85 @@ s=open('app.tsx',encoding='utf-8').read()
 rep2('''const lb = { font: "inherit", cursor: "pointer", background: "transparent", border: "none", color: t.text.primary, padding: 0, fontFamily: JA_FONT } as const;''','''const lb = { font: "inherit", cursor: "pointer", background: "transparent", border: "none", color: t.text.primary, padding: "0 4px", minHeight: 44, minWidth: 36, fontFamily: JA_FONT } as const;''')
 rep2('''gridTemplateColumns: "84px 1fr 42px", gap: 8, alignItems: "center", background: "transparent", border: "none", color: t.text.primary, padding: "2px 0", textAlign: "left" }}>''','''gridTemplateColumns: "84px 1fr 42px", gap: 8, alignItems: "center", background: "transparent", border: "none", color: t.text.primary, padding: "2px 0", minHeight: 44, textAlign: "left" }}>''')
 open('app.tsx','w',encoding='utf-8').write(s)
+
+# ===== Round 10b：12/6 特訓、題型攻略、★ 練習、讀解逐句中譯、深層連結 =====
+import subprocess
+subprocess.run(['python3','build_r10.py'],check=True)
+s=open('app.tsx',encoding='utf-8').read()
+RJ=open('r10/R10.json',encoding='utf-8').read()
+s=s+'\nconst R10_JSON: unknown = '+RJ+';\n'+open('parts/r10.tsx',encoding='utf-8').read()
+# App：深層連結事件、所有分頁可重新掛載、特訓卡片放最上方
+rep2('''    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (typeof d === "string") goTab(d); };
+    window.addEventListener("n3nav", h);
+    return () => window.removeEventListener("n3nav", h);''','''    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (typeof d === "string") goTab(d); };
+    window.addEventListener("n3nav", h);
+    const h2 = (e: Event) => {
+      const d = (e as CustomEvent).detail as { tab: string; sub?: string };
+      let km: KMode | undefined;
+      if (d.tab === "kana" && d.sub) {
+        const [m, sc, rw] = d.sub.split(":");
+        km = m as KMode;
+        if (sc) DEEP.kana_script = sc;
+        if (rw) DEEP.kana_rows = rw;
+        delete DEEP.kana;
+      }
+      go(d.tab, km);
+      const sc2 = DEEP_SCROLL;
+      if (sc2) window.setTimeout(() => { document.getElementById(sc2)?.scrollIntoView({ block: "start" }); DEEP_SCROLL = ""; }, 400);
+    };
+    window.addEventListener("n3go", h2);
+    return () => { window.removeEventListener("n3nav", h); window.removeEventListener("n3go", h2); };''')
+rep2('''        <GlobalSearch />''','''        <Bootcamp home={tab === "kana"} />
+        <GlobalSearch />''')
+for a in ['KanjiTab','VocabTab','GrammarTab','MockTab','ListenTab','SongTab']:
+    rep2(f'<{a} />',f'<{a} key={{kk}} />')
+rep2('<ReviewTab go={go} />','<ReviewTab key={kk} go={go} />')
+# 假名
+rep2('''  const [script, setScript] = useState<Script>("kata");''','''  const [script, setScript] = useState<Script>(() => (takeDeep("kana_script") as Script | null) ?? "kata");''')
+rep2('''  const [rows, setRows] = useState<string[]>(["a", "ka", "sa", "ta", "na"]);''','''  const [rows, setRows] = useState<string[]>(() => { const r = takeDeep("kana_rows"); return r ? r.split(",") : ["a", "ka", "sa", "ta", "na"]; });''')
+# 單字
+rep2('''  const [sub, setSub] = useState<"srs" | "card" | "quiz" | "list">("srs");''','''  const [sub, setSub] = useState<"srs" | "card" | "quiz" | "list">(() => (takeDeep("vocab") as "srs" | "card" | "quiz" | "list" | null) ?? "srs");''')
+# 漢字
+rep2('''  const [sub, setSub] = useState<"list" | "quiz">("list");
+  const [range, setRange] = useState("1-100");''','''  const [dk0] = useState(() => (takeDeep("kanji") ?? "").split(":"));
+  const [sub, setSub] = useState<"list" | "quiz">(() => ((dk0[0] as "list" | "quiz") || "list"));
+  const [range, setRange] = useState(dk0[1] || "1-100");''')
+# 文法（可限定第 a–b 個）
+rep2('''  const [sub, setSub] = useState<"list" | "fill" | "order" | "cmp">(() => (PENDING_GRAM >= 0 ? "fill" : "list"));''','''  const [dg] = useState(() => (takeDeep("grammar") ?? "").split(":"));
+  const [rng, setRng] = useState<[number, number] | null>(() => { const m = (dg[1] ?? "").match(/^(\\d+)-(\\d+)$/); return m ? [Number(m[1]), Number(m[2])] : null; });
+  const [sub, setSub] = useState<"list" | "fill" | "order" | "cmp">(() => (PENDING_GRAM >= 0 ? "fill" : ((dg[0] as "list" | "fill" | "order" | "cmp") || "list")));''')
+rep2('''  const genFill = useMemo(() => {
+    const d = deck(GRAMMAR);''','''  const genFill = useMemo(() => {
+    const d = deck(rng ? GRAMMAR.slice(rng[0] - 1, rng[1]) : GRAMMAR);''')
+rep2('''      return gramQ(pg ?? d());
+    };
+  }, [sub]);''','''      return gramQ(pg ?? d());
+    };
+  }, [sub, rng]);''')
+rep2('''  const shown = GRAMMAR.filter((g: Gram) => !qq || g.pat.includes(qq)''','''  const shown = GRAMMAR.filter((g: Gram) => !rng || (GRAMMAR.indexOf(g) >= rng[0] - 1 && GRAMMAR.indexOf(g) < rng[1])).filter((g: Gram) => !qq || g.pat.includes(qq)''')
+rep2('''["cmp", `易混文法比較（${CMP.length} 組）`]]} />''','''["cmp", `易混文法比較（${CMP.length} 組）`]]} />
+      {rng && (sub === "list" || sub === "fill") ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 14 }}>
+          <span>🔥 特訓範圍：只看第 {rng[0]}–{rng[1]} 個文法</span>
+          <Btn small label="顯示全部" onClick={() => setRng(null)} />
+        </div>
+      ) : null}''')
+# 模考：題型攻略
+rep2('''  const [sec, setSec] = useState("all");
+  const [mode, setMode] = useState("sets");''','''  const [dm] = useState(() => (takeDeep("mock") ?? "").split(":"));
+  const [sec, setSec] = useState(dm[1] || "all");
+  const [mode, setMode] = useState(dm[0] || "sets");''')
+rep2('''options={[["sets", `📚 第1–${EXAMS.length}回 模考`], ["prac", "分項練習（隨機）"],''','''scroll={NARROW()} options={[["sets", `📚 第1–${EXAMS.length}回 模考`], ["guide", "🧭 題型攻略・★ 練習"], ["prac", "分項練習（隨機）"],''')
+rep2('''      {mode === "sets" ? <ExamSets /> : mode === "exam"''','''      {mode === "guide" ? <ExamGuide /> : mode === "sets" ? <ExamSets /> : mode === "exam"''')
+# 聽力
+rep2('''  const [lt, setLt] = useState("all");''','''  const [lt, setLt] = useState(() => takeDeep("listen") ?? "all");''')
+# 錯題分析錨點
+rep2('''      <ActivityPanel />
+      <MistakeAnalysis />''','''      <ActivityPanel />
+      <div id="mistake-analysis" style={{ scrollMarginTop: 8 }}><MistakeAnalysis /></div>''')
+# 讀解：點句子看中文
+rep2('''          <Rich text={q.passage} />
+          <div style={{ marginTop: 6 }}>''','''          <TapPassage key={q.id} text={q.passage} />
+          <div style={{ marginTop: 6 }}>''')
+open('app.tsx','w',encoding='utf-8').write(s)
+print('round10b ok')

@@ -75,10 +75,12 @@ const SHOT = !process.env.NOSHOT;
     for (const tb of tabs) {
       await p.evaluate((l) => [...document.querySelectorAll('[role=tab]')].find(b => b.getAttribute('aria-label') === l).click(), tb); await sl(400);
       await p.evaluate(() => scrollTo(0, 0));
+      if (tb === '50音') { await p.evaluate(() => [...document.querySelectorAll('button')].find(b => /看 16 天完整計畫/.test(b.textContent))?.click()); await sl(200); }
       issues.push(...await check(tb)); await snap(tb);
       const modes = await firstChips();
       for (const m of modes.slice(1)) {
         if (!(await clickIn(m))) continue; await sl(350);
+        await p.evaluate(() => { document.querySelectorAll('details').forEach(d => d.open = true); [...document.querySelectorAll('button')].filter(b => /開始 ★|書信・通知讀解練習|看 16 天完整計畫/.test(b.textContent)).forEach(b => b.click()); }); await sl(300);
         issues.push(...await check(tb + '›' + m)); await snap(tb + '_' + m);
       }
       if (modes.length) await clickIn(modes[0]);

@@ -1,6 +1,6 @@
 set -e
 cd /workspace/n3-pwa/build
-python3 ../songs/build_songs.py && python3 build_exams.py >/dev/null && python3 patch.py >/dev/null && cp /workspace/n3-app/build/node_modules/kuromoji/build/kuromoji.js ../site/kuromoji.js && mkdir -p ../site/dict && cp /workspace/n3-app/build/node_modules/kuromoji/dict/*.dat.gz ../site/dict/
+python3 ../songs/build_songs.py && python3 build_exams.py >/dev/null && python3 patch.py >/dev/null && cp /workspace/n3-app/build/node_modules/kuromoji/build/kuromoji.js ../site/kuromoji.js && mkdir -p ../site/dict && cp /workspace/n3-app/build/node_modules/kuromoji/dict/*.dat.gz ../site/dict/ || exit 1
 npx tsc -p .
 npx esbuild main.tsx --bundle --minify --format=iife --alias:grok/canvas=./shim.ts --jsx=automatic --define:process.env.NODE_ENV='"production"' --outfile=bundle.js --log-level=warning
 VER=$(sha1sum bundle.js | cut -c1-10)
