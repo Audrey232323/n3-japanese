@@ -357,8 +357,7 @@ function Bootcamp(props: { home: boolean }) {
   const totalD = Object.keys(st.done).length;
   const daysLeft = Math.round((new Date(2026, 11, 6).getTime() - new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime()) / 86400000);
   const md = (s: string) => `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}`;
-  const run = (k: string, x: BTask) => {
-    if (!st.done[k]) toggle(k);
+  const run = (_k: string, x: BTask) => {
     if (x.tab === "review" && !x.sc) DEEP_SCROLL = "";
     goDeep(x.tab, x.sub, x.sc);
   };
@@ -390,7 +389,7 @@ function Bootcamp(props: { home: boolean }) {
           <PassNote />
           <Btn small label={all ? "收起 16 天計畫" : "📅 看 16 天完整計畫"} onClick={() => setAll(!all)} />
           {all ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 6 }}>
               {BOOT.map((d: BDay, i: number) => {
                 const c = cnt(i), n = d.tasks.length;
                 return (
