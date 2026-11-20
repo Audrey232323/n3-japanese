@@ -3811,8 +3811,10 @@ function btnStyle(t: T, kind: "primary" | "plain", on: boolean, small: boolean):
     cursor: "pointer",
     borderRadius: 999,
     padding: small ? "6px 12px" : "9px 16px",
-    minHeight: small ? 40 : 44,
-    minWidth: small ? 40 : 44,
+    minHeight: 44,
+    minWidth: 44,
+    flexShrink: 0,
+    maxWidth: "100%",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -3837,7 +3839,7 @@ function Btn(props: { label: ReactNode; onClick: () => void; kind?: "primary" | 
 }
 function Chips<V extends string>(props: { value: V; options: [V, string][]; onChange: (v: V) => void; small?: boolean; scroll?: boolean }) {
   return (
-    <div style={{ display: "flex", flexWrap: props.scroll ? "nowrap" : "wrap", gap: 6, overflowX: props.scroll ? "auto" : undefined, paddingBottom: props.scroll ? 4 : undefined }}>
+    <div role="group" className={props.scroll ? "chiprow" : undefined} style={{ display: "flex", flexWrap: props.scroll ? "nowrap" : "wrap", gap: 6, overflowX: props.scroll ? "auto" : undefined, overflowY: props.scroll ? "hidden" : undefined, paddingBottom: props.scroll ? 6 : undefined, scrollSnapType: props.scroll ? "x proximity" : undefined, WebkitOverflowScrolling: "touch", minWidth: 0, maxWidth: "100%" } as CSSProperties}>
       {props.options.map(([v, label]: [V, string]) => (
         <Btn key={v} label={label} on={props.value === v} small={props.small} onClick={() => props.onChange(v)} />
       ))}
@@ -3852,7 +3854,7 @@ function Speak(props: { text: string; label?: string }) {
       title="播放發音"
       aria-label={props.label ? `播放：${props.label}` : "播放日語發音"}
       onClick={() => speak(props.text)}
-      style={{ ...btnStyle(t, "plain", false, true), padding: "4px 10px", minHeight: 40, minWidth: 44 }}
+      style={{ ...btnStyle(t, "plain", false, true), padding: "4px 10px", minHeight: 44, minWidth: 44 }}
     >
       🔊{props.label ? " " + props.label : ""}
     </button>
@@ -5036,7 +5038,7 @@ function KanaDash(props: { onPick: (row: string, s: Script) => void }) {
       <Card title={`${name}掌握度 ${Math.round((all.v / Math.max(1, all.n)) * 100)}%`}>
         <div style={{ display: "grid", gap: 6 }}>
           {rs.map(({ r, v }: { r: Row; v: number }) => (
-            <button key={r.id} type="button" aria-label={`${name} ${r.name} 掌握度 ${Math.round(v * 100)}%，點一下練這一行`} onClick={() => props.onPick(r.id, scr === "h" ? "hira" : "kata")} style={{ font: "inherit", cursor: "pointer", display: "grid", gridTemplateColumns: "84px 1fr 42px", gap: 8, alignItems: "center", background: "transparent", border: "none", color: t.text.primary, padding: "2px 0", textAlign: "left" }}>
+            <button key={r.id} type="button" aria-label={`${name} ${r.name} 掌握度 ${Math.round(v * 100)}%，點一下練這一行`} onClick={() => props.onPick(r.id, scr === "h" ? "hira" : "kata")} style={{ font: "inherit", cursor: "pointer", display: "grid", gridTemplateColumns: "84px 1fr 42px", gap: 8, alignItems: "center", background: "transparent", border: "none", color: t.text.primary, padding: "2px 0", minHeight: 44, textAlign: "left" }}>
               <span lang="ja" style={{ fontFamily: JA_FONT, fontSize: 14 }}>{scr === "k" ? toKata(r.name) : r.name}{medal(v) ? " " + medal(v) : ""}</span>
               <Bar v={v} color={v >= 0.8 ? t.text.success : v >= 0.4 ? t.text.accent : t.text.danger} />
               <span style={{ fontSize: 12, color: t.text.secondary, textAlign: "right" }}>{Math.round(v * 100)}%</span>
@@ -5621,7 +5623,7 @@ function KanaTab() {
   useEffect(() => {
     KANA_START = null;
   }, []);
-  const lb = { font: "inherit", cursor: "pointer", background: "transparent", border: "none", color: t.text.primary, padding: 0, fontFamily: JA_FONT } as const;
+  const lb = { font: "inherit", cursor: "pointer", background: "transparent", border: "none", color: t.text.primary, padding: "0 4px", minHeight: 44, minWidth: 36, fontFamily: JA_FONT } as const;
   const [script, setScript] = useState<Script>("kata");
   const [dir, setDir] = useState<"k2r" | "r2k">("k2r");
   const [rows, setRows] = useState<string[]>(["a", "ka", "sa", "ta", "na"]);
